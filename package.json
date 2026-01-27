@@ -1,0 +1,19 @@
+{
+  "name": "apex-platform",
+  "version": "1.0.0",
+  "description": "A comprehensive Audio-Visual Project Management Platform designed for professional AV integrators, project managers, and field operations teams.",
+  "main": "index.html",
+  "keywords": [
+    "project-management",
+    "av-industry", 
+    "field-operations",
+    "scheduling",
+    "productivity-monitoring",
+    "reporting",
+    "dashboard",
+    "single-page-application"
+  ],
+  "author": "APEX Platform Contributors",
+  "license": "MIT",
+  "homepage": "https://github.com/yourusername/apex-platform#readme"
+}
