@@ -5,6 +5,70 @@ All notable changes to the APEX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.0.0] - 2026-01-27
+
+### Major Refactoring - ES Module Architecture
+
+**Complete modularization of the monolithic codebase using Vite and ES Modules.**
+
+#### Added
+- **Vite Build System**
+  - Hot Module Replacement (HMR) for development
+  - ES Module support with tree-shaking
+  - API proxy configuration for development
+  - Production build optimization
+
+- **New Modular Architecture**
+  - `src/js/api/client.js` - Centralized API client with JWT management (281 lines)
+  - `src/js/core/config.js` - Application configuration and feature flags
+  - `src/js/core/state.js` - Reactive state management store
+  - `src/js/core/state-bridge.js` - Legacy-to-modern state synchronization (228 lines)
+  - `src/js/ui/auth.js` - Authentication UI with password strength validation (354 lines)
+  - `src/js/ui/notifications.js` - Toast notification system (308 lines)
+  - `src/js/ui/modal.js` - Modal/dialog component system (389 lines)
+  - `src/js/utils/formatters.js` - General utility functions (209 lines)
+  - `src/js/utils/project-helpers.js` - Project-specific helpers (408 lines)
+
+- **CSS Extraction**
+  - 4,471 lines of CSS extracted to `src/css/main.css`
+  - Maintains backward compatibility with legacy code
+
+- **Developer Experience**
+  - `npm run dev` - Start Vite development server
+  - `npm run build` - Production build
+  - `npm run preview` - Preview production build
+  - `APEX_migrationStatus()` - Console command for migration status
+
+#### Changed
+- **API Client**
+  - Centralized fetch wrapper with automatic JWT injection
+  - Request timeout handling (30s default, 2min for uploads)
+  - Domain-specific endpoints (authApi, projectsApi, usersApi, adminApi, attachmentsApi)
+  - Automatic token refresh and session management
+
+- **State Management**
+  - Bridge pattern syncs legacy `window.AppState` with new modular state
+  - Reactive subscriptions for state changes
+  - Feature flag controlled rollout (`FEATURES.USE_NEW_STATE`)
+
+- **UI Components**
+  - New notification system with toast animations
+  - Enhanced modal system with stacking support
+  - Password strength indicator with real-time feedback
+  - Lockout protection for failed login attempts
+
+#### Fixed
+- **Connection Pool Bug** - Fixed `pool.close()` issue in all route files that was closing database connections prematurely
+  - Affected files: auth.js, projects.js, users.js, admin.js, audit.js, room-status.js
+  - Connections now properly reused via pooling
+
+#### Technical
+- **Total Lines Extracted:** 6,989 lines from monolithic index.html
+- **Migration Pattern:** "Strangler Fig" - gradual extraction while maintaining compatibility
+- **Legacy Bridge:** All new modules exposed to `window.*` for backward compatibility
+
+---
+
 ## [1.0.0] - 2025-09-07
 
 ### Added

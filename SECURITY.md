@@ -6,6 +6,7 @@ We actively maintain and provide security updates for the following versions:
 
 | Version | Supported          |
 | ------- | ------------------ |
+| 7.0.x   | :white_check_mark: |
 | 1.0.x   | :white_check_mark: |
 | < 1.0   | :x:                |
 
@@ -148,5 +149,5 @@ For security-related questions or concerns, please contact:
 
 ---
 
-**Last Updated**: 2025-09-07  
-**Version**: 1.0.0
+**Last Updated**: 2026-01-27
+**Version**: 7.0.0
