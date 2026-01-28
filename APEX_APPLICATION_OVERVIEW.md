@@ -3,10 +3,11 @@
 ## Executive Summary
 The APEX Platform is a comprehensive Audio-Visual Project Management System designed to streamline the entire lifecycle of AV projects from initial request through completion and field operations. Built as a modern single-page web application, it provides both offline functionality and optional backend integration for enhanced features.
 
-**Platform Type:** Progressive Web Application (PWA)  
-**Architecture:** Single HTML file with embedded JavaScript and CSS  
-**Hosting:** Nginx Web Server with HTTPS  
-**Data Storage:** Browser localStorage with optional backend sync  
+**Platform Type:** Progressive Web Application (PWA)
+**Architecture:** Modular ES Modules with Vite build system (v7.0+)
+**Hosting:** Nginx Web Server with HTTPS
+**Data Storage:** Browser localStorage with optional backend sync
+**Build System:** Vite with Hot Module Replacement (HMR)
 **Target Users:** AV Project Managers, Technicians, Executives, and Field Operations Teams
 
 ---
@@ -113,22 +114,25 @@ The APEX Platform is a comprehensive Audio-Visual Project Management System desi
 
 ### 1. Technical Architecture
 
-#### **Single-Page Application Design**
+#### **Modular Application Design (v7.0+)**
 ```
 APEX Platform Architecture:
 ┌─────────────────────────────────────────────────────┐
 │                 Nginx Web Server                    │
 │                 (HTTPS/SSL/TLS)                     │
 ├─────────────────────────────────────────────────────┤
-│                Single HTML File                     │
+│              Vite Build System                      │
+│         (ES Modules + Hot Reload)                   │
+├─────────────────────────────────────────────────────┤
+│                  src/ Modules                       │
 │  ┌─────────────┬─────────────┬─────────────────────┐│
-│  │    HTML     │     CSS     │    JavaScript       ││
-│  │ Structure   │  Styling    │   Application       ││
-│  │   & UI      │ & Themes    │     Logic           ││
+│  │  main.js    │  css/       │    js/              ││
+│  │  (Entry)    │  main.css   │  api/ core/ ui/    ││
+│  │             │  (4,471 ln) │  utils/             ││
 │  └─────────────┴─────────────┴─────────────────────┘│
 ├─────────────────────────────────────────────────────┤
 │              Browser localStorage                   │
-│           (Primary Data Storage)                    │
+│     + State Bridge (legacy ↔ modern sync)          │
 ├─────────────────────────────────────────────────────┤
 │            External Libraries (CDN)                 │
 │  XLSX.js | jsPDF | Chart.js | Sortable.js         │
@@ -136,11 +140,32 @@ APEX Platform Architecture:
           │                              │
           ▼                              ▼
 ┌─────────────────┐              ┌──────────────────┐
-│  Optional       │              │    Data Export   │
+│  Node.js        │              │    Data Export   │
 │  Backend API    │              │   (JSON/Excel/   │
-│ (Node.js/       │              │     PDF/CSV)     │
-│  MariaDB)       │              │                  │
+│ (SQL Server)    │              │     PDF/CSV)     │
 └─────────────────┘              └──────────────────┘
+```
+
+#### **Module Structure**
+```
+src/
+├── main.js                    # Entry point, window.* bridge
+├── css/
+│   └── main.css               # Extracted CSS (4,471 lines)
+└── js/
+    ├── api/
+    │   └── client.js          # Centralized API with JWT (281 lines)
+    ├── core/
+    │   ├── config.js          # Feature flags and configuration
+    │   ├── state.js           # Reactive state management
+    │   └── state-bridge.js    # Legacy↔Modern sync (228 lines)
+    ├── ui/
+    │   ├── auth.js            # Authentication UI (354 lines)
+    │   ├── notifications.js   # Toast notifications (308 lines)
+    │   └── modal.js           # Modal dialogs (389 lines)
+    └── utils/
+        ├── formatters.js      # Utility functions (209 lines)
+        └── project-helpers.js # Project helpers (408 lines)
 ```
 
 #### **Data Flow Architecture**
@@ -472,7 +497,15 @@ UserExperience = {
 
 ## Future Roadmap
 
-### 1. Planned Enhancements
+### 1. Completed in v7.0
+
+#### **Modularization (Complete)**
+- **ES Module Architecture**: Fully modular codebase with Vite build system
+- **State Management**: Reactive state with legacy bridge pattern
+- **UI Components**: Reusable auth, notification, and modal modules
+- **API Client**: Centralized API layer with JWT management
+
+### 2. Planned Enhancements
 
 #### **Advanced Features**
 - **AI Integration**: Machine learning for predictive analytics and automation
@@ -486,9 +519,10 @@ UserExperience = {
 - **Marketplace**: Plugin marketplace for custom extensions
 - **White-Label**: Rebrandable platform for reseller channels
 
-### 2. Technology Evolution
+### 3. Technology Evolution
 
 #### **Modernization Path**
+- **React/Vue Migration**: Framework adoption leveraging modular foundation
 - **Progressive Web App**: Enhanced mobile experience with offline sync
 - **Microservices**: Service-oriented architecture for better scalability
 - **Cloud Native**: Kubernetes deployment with auto-scaling
@@ -496,7 +530,7 @@ UserExperience = {
 
 ---
 
-**Application Overview Version: 1.0**  
-**Last Updated: 2025-09-07**  
-**Document Owner: Technical Architecture Team**  
-**Next Review: 2025-12-07**
+**Application Overview Version: 7.0**
+**Last Updated: 2026-01-27**
+**Document Owner: Technical Architecture Team**
+**Next Review: 2026-04-27**

@@ -41,13 +41,14 @@ When backend services are enabled, the platform can optionally sync with:
 
 ### Core Application State
 
+#### **Legacy State (window.AppState)**
 ```javascript
 const AppState = {
     // User session information
     isLoggedIn: false,
     user: null,
     currentView: 'login',
-    
+
     // Main application data
     projects: [],           // Array of project objects
     fieldOps: {            // Field operations data
@@ -56,7 +57,7 @@ const AppState = {
         pending: []
     },
     auditLog: [],          // Activity audit trail
-    
+
     // Configuration settings
     config: {
         USE_BACKEND: true,     // Backend integration enabled
@@ -64,7 +65,7 @@ const AppState = {
         refreshInterval: 30000,
         masterAccounts: ['admin@apex.local']
     },
-    
+
     // Budget tracking
     breakfixBudget: {
         totalBudget: 50000,
@@ -72,7 +73,7 @@ const AppState = {
         remainingBudget: 50000,
         lastUpdated: "2025-09-07T..."
     },
-    
+
     // User preferences and settings
     settings: {
         theme: 'light',
@@ -80,6 +81,46 @@ const AppState = {
         autoSave: true
     }
 };
+```
+
+#### **Modern State Management (v7.0+)**
+
+The new modular architecture includes a reactive state store in `src/js/core/state.js`:
+
+```javascript
+import AppState, { Actions } from './js/core/state.js';
+
+// Get state values
+const projects = AppState.get('projects');
+const user = AppState.get('currentUser');
+
+// Update state (triggers reactive updates)
+Actions.setProjects(newProjects);
+Actions.setUser(newUser);
+Actions.setLoading(true);
+
+// Subscribe to state changes
+AppState.subscribe('projects', (newProjects, oldProjects) => {
+  console.log('Projects updated:', newProjects.length);
+});
+```
+
+#### **State Bridge Pattern**
+
+The `state-bridge.js` module synchronizes legacy and modern state:
+
+```javascript
+import stateBridge, { notifyStateChange } from './js/core/state-bridge.js';
+
+// Initialize bridge with legacy state
+stateBridge.init(window.AppState);
+
+// Notify bridge of legacy state changes
+window.notifyStateChange('projects', newProjects);
+window.notifyStateChange('currentUser', user);
+```
+
+This ensures backward compatibility while enabling gradual migration to the modern state system.
 ```
 
 ---
@@ -697,6 +738,6 @@ function createAutomaticBackup() {
 
 ---
 
-**Data Storage Architecture Version: 1.0**  
-**Last Updated: 2025-09-07**  
-**Next Review: 2025-10-07**
+**Data Storage Architecture Version: 7.0**
+**Last Updated: 2026-01-27**
+**Next Review: 2026-04-27**

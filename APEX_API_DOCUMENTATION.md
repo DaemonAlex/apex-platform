@@ -862,7 +862,52 @@ X-RateLimit-Window: 3600
 
 ## SDK and Integration Examples
 
-### JavaScript/Node.js Example
+### Built-in API Client (v7.0+)
+
+The APEX Platform includes a centralized API client in `src/js/api/client.js`:
+
+```javascript
+// Import the API client
+import api, {
+  authApi,
+  projectsApi,
+  usersApi,
+  adminApi,
+  attachmentsApi
+} from './js/api/client.js';
+
+// Authentication
+const result = await authApi.login(email, password);
+await authApi.logout();
+await authApi.register(userData);
+
+// Projects
+const projects = await projectsApi.getAll();
+const project = await projectsApi.get(id);
+await projectsApi.create(projectData);
+await projectsApi.update(id, projectData);
+await projectsApi.delete(id);
+
+// Users
+const users = await usersApi.getAll();
+const currentUser = await usersApi.getCurrent();
+
+// Admin
+const stats = await adminApi.getStats();
+const adminUsers = await adminApi.getUsers();
+
+// Attachments
+await attachmentsApi.upload(file, taskId, projectId);
+const attachments = await attachmentsApi.getForTask(taskId, projectId);
+```
+
+#### **Features**
+- Automatic JWT token injection from localStorage
+- Request timeout handling (30s default, 2min for uploads)
+- Centralized error handling with `ApiError` class
+- Auth events dispatched on token expiry (`auth:unauthorized`)
+
+### External JavaScript/Node.js Example
 
 ```javascript
 const axios = require('axios');
@@ -936,6 +981,6 @@ projects = api.get_projects({'status': 'active'})
 
 ---
 
-**API Documentation Version: 1.0**  
-**Last Updated: 2025-09-07**  
-**Next Review: 2025-10-07**
+**API Documentation Version: 7.0**
+**Last Updated: 2026-01-27**
+**Next Review: 2026-04-27**

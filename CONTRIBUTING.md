@@ -12,6 +12,50 @@ We love your input! We want to make contributing to APEX Platform as easy and tr
 
 We use GitHub to host code, to track issues and feature requests, as well as accept pull requests.
 
+### Getting Started (v7.0+ Modular Architecture)
+
+1. Fork the repo and create your branch from `main`.
+2. Install dependencies:
+   ```bash
+   npm install
+   cd node && npm install
+   ```
+3. Start the development environment:
+   ```bash
+   # Terminal 1: Start backend
+   cd node && npm start
+
+   # Terminal 2: Start Vite dev server
+   npm run dev
+   ```
+4. Access the application at `http://localhost:5173`
+
+### Project Structure
+
+```
+/apex-platform
+├── index.html              # Main application (legacy monolith)
+├── package.json            # Root package with Vite
+├── vite.config.js          # Vite configuration with API proxy
+└── src/
+    ├── main.js             # Module entry point
+    ├── css/main.css        # Extracted CSS (4,471 lines)
+    └── js/
+        ├── api/client.js   # Centralized API client
+        ├── core/           # Config, state management
+        ├── ui/             # UI components (auth, notifications, modal)
+        └── utils/          # Utility functions
+```
+
+### Development Guidelines
+
+1. **New code should be ES Modules** - Add to `src/js/` directory
+2. **Expose to window for legacy compatibility** - Update `src/main.js`
+3. **Use feature flags** - Control rollout via `src/js/core/config.js`
+4. **Follow the Strangler Fig pattern** - Gradually extract from index.html
+
+### Pull Request Process
+
 1. Fork the repo and create your branch from `main`.
 2. If you've added code that should be tested, add tests.
 3. If you've changed APIs, update the documentation.

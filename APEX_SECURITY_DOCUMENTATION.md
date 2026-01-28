@@ -479,8 +479,8 @@ const auditLog = {
 
 ---
 
-**Document Classification: CONFIDENTIAL**  
-**Document Version: 1.0**  
-**Last Updated: 2025-09-07**  
-**Next Security Review: 2025-10-07**  
+**Document Classification: CONFIDENTIAL**
+**Document Version: 7.0**
+**Last Updated: 2026-01-27**
+**Next Security Review: 2026-04-27**
 **Approved By: Security Officer**
