@@ -63,8 +63,278 @@
 **Key Technical Constraints:**
 1. **Project IDs MUST start with `WTB_`** - Backend filter: `WHERE id LIKE 'WTB_%'` (node/routes/projects.js:53)
 2. **Field Mapping:** Frontend `estimatedBudget` → Backend `budget`, Frontend `businessLine` → Backend `client`
-3. **Single-file app:** index.html = 18,000+ lines
-4. **Default Admin:** `admin@apex.local` / `ApexSuperAdmin2025!`
+3. **Modular Architecture:** Now using Vite + ES Modules (see Modularization section below)
+4. **Default Admin:** `admin@apex.local` / `ApexAdmin2026!`
+
+---
+
+## 🏗️ MODULARIZATION PROJECT (Started January 27, 2026)
+
+### Overview
+Converting the 18,000+ line monolithic `index.html` to a modern ES Module architecture using Vite. Using the **"Strangler Fig" pattern** - gradually extracting pieces while keeping the main app running.
+
+### Why Vite?
+- Zero configuration needed
+- Blazing fast Hot Module Replacement (HMR)
+- Native ES Module support
+- Future-ready for React/Vue migration
+
+### Current Progress
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| Phase 1 | ✅ Complete | Setup & Infrastructure (Vite, directory structure) |
+| Phase 2a | ✅ Complete | API Client (centralized fetch wrapper) |
+| Phase 2b | ✅ Complete | CSS Extraction (4,471 lines → src/css/main.css) |
+| Phase 2c | ✅ Complete | Utility Functions (formatters, project helpers) |
+| Phase 3 | ✅ Complete | State Management (Bridge pattern for sync) |
+| Phase 4 | ✅ Complete | UI Modules (Auth, Notifications, Modal) |
+| Phase 5 | ✅ Complete | Full Migration (legacy→module bridges) |
+
+### Directory Structure
+```
+/apex-platform
+├── index.html              # Original monolith (still works)
+├── package.json            # Updated with Vite
+├── vite.config.js          # Dev server + API proxy config
+└── src/
+    ├── main.js             # Bridge entry point (exposes to window.*)
+    ├── css/
+    │   └── main.css        # Extracted CSS (4,471 lines)
+    └── js/
+        ├── api/
+        │   └── client.js   # Centralized API client with auth
+        ├── core/
+        │   ├── config.js   # App configuration & feature flags
+        │   ├── state.js    # Reactive state store with Actions
+        │   └── state-bridge.js  # Syncs legacy ↔ modern state
+        ├── ui/
+        │   ├── index.js    # UI module exports
+        │   ├── auth.js     # Auth UI helpers (validation, login/logout)
+        │   ├── notifications.js  # Toast notifications system
+        │   └── modal.js    # Modal/dialog system
+        └── utils/
+            ├── formatters.js       # General utilities (209 lines)
+            └── project-helpers.js  # Project-specific helpers (408 lines)
+```
+
+### Running the Application
+
+**Development (Vite - recommended):**
+```bash
+cd /home/daemonalex/projects/apex-platform
+npm run dev
+# Access at http://localhost:5173
+```
+
+**Production (nginx):**
+```bash
+# Uses Docker containers on port 80
+# Access at http://localhost
+```
+
+### New API Client Features
+Located in `src/js/api/client.js`:
+- Automatic JWT token injection
+- Request timeout handling (30s default, 2min for uploads)
+- Centralized error handling with `ApiError` class
+- Auth event dispatching (`auth:unauthorized`, `auth:logout`)
+- Domain-specific endpoints:
+  - `authApi.login()`, `authApi.logout()`, `authApi.register()`
+  - `projectsApi.getAll()`, `projectsApi.create()`, `projectsApi.update()`
+  - `usersApi.getAll()`, `usersApi.getCurrent()`
+  - `adminApi.getStats()`, `adminApi.getUsers()`
+  - `attachmentsApi.upload()`, `attachmentsApi.getForTask()`
+
+### Extracted Utility Functions
+All exposed to `window.*` for backward compatibility:
+
+**Formatters (src/js/utils/formatters.js):**
+- `formatCurrency()`, `formatDate()`, `formatDateTime()`, `formatRelativeTime()`
+- `formatPercentage()`, `formatFileSize()`, `formatPhoneNumber()`
+- `truncateText()`, `capitalize()`, `toTitleCase()`
+- `debounce()`, `throttle()`, `deepClone()`, `isEmpty()`
+- `generateId()`, `generateProjectId()` (with WTB_ prefix)
+
+**Project Helpers (src/js/utils/project-helpers.js):**
+- `getTasks()`, `normalizeProject()`, `toArrayMaybe()`
+- `calculateProjectProgress()`, `calculateProjectStatus()`
+- `calculateProjectHealth()`, `calculateTaskAggregates()`
+- `getProgressColor()`, `getRagColor()`, `getStatusColor()`
+- `formatStatus()`, `formatProjectType()`, `formatBusinessLine()`
+- `sortProjects()`, `filterProjectsBySearch()`, `filterProjectsByStatus()`
+- `getProjectStats()`, `getDefaultTasksForType()`
+
+### The "Bridge" Pattern
+During migration, all new modules are exposed to `window.*` so legacy code continues to work:
+```javascript
+// In src/main.js
+import { formatCurrency } from './js/utils/formatters.js';
+window.formatCurrency = formatCurrency; // Legacy code can still use it
+```
+
+### Next Steps (Phase 3)
+1. **Enable new state management** - Set `FEATURES.USE_NEW_STATE = true` in config.js
+2. **Migrate API calls** - Replace `fetch('/api/...')` calls with `api.get()`, `projectsApi.getAll()`, etc.
+3. **Extract UI modules** - Auth (login/logout), Dashboard, Project List
+
+### Key Files to Understand
+- `src/main.js` - Entry point, imports all modules, exposes to window
+- `src/js/core/config.js` - Feature flags control migration rollout
+- `vite.config.js` - API proxy configuration for development
+
+### Testing the Modules
+```bash
+# Check if modules load
+curl http://localhost:5173/src/main.js | head -20
+
+# Check CSS extraction
+curl http://localhost:5173/src/css/main.css | head -20
+
+# Verify API proxy works
+curl http://localhost:5173/api/health
+```
+
+### Migration Status Command
+Run in browser console to see module status:
+```javascript
+APEX_migrationStatus()
+// Shows: modules loaded, lines extracted, legacy overrides
+```
+
+### Known Issues
+- CSS remains in index.html AND src/css/main.css during transition (intentional for production compatibility)
+- `pool.close()` bug fixed in ALL route files (auth.js, projects.js, users.js, admin.js, audit.js, room-status.js) - connection pool stays open for reuse
+
+### State Bridge Pattern (Phase 3)
+
+The State Bridge (`src/js/core/state-bridge.js`) syncs the legacy `window.AppState` with the new modular `AppState`:
+
+**How it works:**
+1. Legacy code continues to modify `window.AppState` directly
+2. Key state changes call `window.notifyStateChange(key, value)` to sync to modern state
+3. Modern state changes automatically sync back to legacy state
+4. Both remain in sync during the transition period
+
+**Integration points in index.html:**
+- `loginUser()` - notifies on user login
+- `logout()` - notifies on user logout
+- `loadProjectsFromBackend()` - notifies when projects are loaded
+- `deleteProject()` - notifies when projects are deleted
+
+**Using in new code:**
+```javascript
+// Modern modules can use the new state directly
+import { AppState, Actions } from './js/core/state.js';
+
+// Get state
+const projects = AppState.get('projects');
+const user = AppState.get('currentUser');
+
+// Update state (automatically syncs to legacy)
+Actions.setProjects(newProjects);
+Actions.setUser(newUser);
+
+// Subscribe to changes
+AppState.subscribe('projects', (newProjects, oldProjects) => {
+  console.log('Projects changed:', newProjects.length);
+});
+```
+
+### UI Modules (Phase 4)
+
+**Auth Module (`src/js/ui/auth.js`):**
+- `validateEmail(email)` - Validate email format
+- `validatePassword(password)` - Check password requirements, returns `{ isValid, errors, strength }`
+- `calculatePasswordStrength(password)` - Returns 0-100 score
+- `getPasswordStrengthLabel(strength)` - Returns `{ label, color }`
+- `login(email, password)` - Async login with lockout protection
+- `logout()` - Clear auth state
+- `requestPasswordReset(email)` - Send reset email
+- `resetPassword(token, email, newPassword)` - Complete reset
+- `isAuthenticated()` - Check session validity
+- `getAuthState()` - Get full auth UI state
+
+**Notifications Module (`src/js/ui/notifications.js`):**
+```javascript
+// Show notifications
+Notifications.success('Project saved!');
+Notifications.error('Failed to load');
+Notifications.warning('Unsaved changes');
+Notifications.info('Loading...');
+
+// Confirm dialog
+const confirmed = await Notifications.confirm('Delete this project?', {
+  title: 'Confirm Delete',
+  type: 'danger'
+});
+```
+
+**Modal Module (`src/js/ui/modal.js`):**
+```javascript
+// Create custom modal
+const modal = Modal.create({
+  title: 'Edit Project',
+  content: '<form>...</form>',
+  buttons: [
+    { label: 'Cancel', onClick: (m) => m.close() },
+    { label: 'Save', primary: true, onClick: handleSave }
+  ]
+});
+
+// Built-in dialogs
+await Modal.alert('Operation complete');
+const name = await Modal.prompt('Enter project name:');
+```
+
+---
+
+## 🖥️ LOCAL DEV ENVIRONMENT (WSL)
+
+### Location
+- **Path:** `/home/daemonalex/projects/apex-platform`
+- **Windows equivalent:** `\\wsl$\Ubuntu\home\daemonalex\projects\apex-platform`
+
+### Running Services (Local Dev)
+
+| Service | Port | Command |
+|---------|------|---------|
+| Vite Dev Server | 5173 | `npm run dev` |
+| Node.js Backend | 3000 | `cd node && npm start` |
+| SQL Server | 1433 | Docker container `apex-sqlserver` |
+| nginx | 80 | Docker container `apex-nginx` |
+
+### Database Credentials (Local Dev)
+```
+Host: localhost
+Database: APEX_DB
+User: SA
+Password: ApexDemo2026Secure
+```
+
+### Admin Login (Local Dev)
+```
+Email: admin@apex.local
+Password: ApexAdmin2026!
+```
+
+### Quick Start Commands
+```bash
+# Start SQL Server (if not running)
+sg docker -c 'docker start apex-sqlserver'
+
+# Start backend
+export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+cd /home/daemonalex/projects/apex-platform/node
+node server.js &
+
+# Start Vite dev server
+cd /home/daemonalex/projects/apex-platform
+npm run dev
+
+# Or start nginx for production mode
+sg docker -c 'docker start apex-nginx'
+```
 
 ---
 
@@ -137,6 +407,63 @@ See "Container Architecture & Emergency Procedures" section at bottom of documen
 ---
 
 ## 📅 CHANGE HISTORY
+
+### January 27, 2026 - Modularization Project Kickoff
+
+#### **🏗️ Major Architecture Refactoring Started**
+
+**Goal:** Convert 18,000+ line monolithic index.html to modern ES Module architecture using Vite.
+
+**Work Completed:**
+
+1. **Environment Setup (WSL)**
+   - Moved project to native Linux filesystem: `/home/daemonalex/projects/apex-platform`
+   - Installed Node.js 20 via nvm
+   - Set up Docker containers (SQL Server, nginx) on apex-network
+
+2. **Vite Build System**
+   - Installed Vite 7.3.1
+   - Created `vite.config.js` with API proxy to backend
+   - Added npm scripts: `dev`, `build`, `preview`
+
+3. **Module Structure Created**
+   ```
+   src/
+   ├── main.js                    # Bridge entry point
+   ├── css/main.css               # 4,471 lines extracted
+   └── js/
+       ├── api/client.js          # Centralized API (281 lines)
+       ├── core/config.js         # App configuration
+       ├── core/state.js          # Reactive state management
+       └── utils/
+           ├── formatters.js      # General utilities (209 lines)
+           └── project-helpers.js # Project helpers (408 lines)
+   ```
+
+4. **API Client Features**
+   - Automatic JWT token injection
+   - Request timeouts
+   - Centralized error handling
+   - Domain-specific endpoints (authApi, projectsApi, usersApi, adminApi)
+
+5. **Bug Fixes**
+   - Fixed `pool.close()` issue in ALL route files (auth.js, projects.js, users.js, admin.js, audit.js, room-status.js) that was closing database connections after each request
+
+**Total Lines Extracted:** ~5,369
+
+**Services Running:**
+- Vite Dev Server: http://localhost:5173
+- Node.js Backend: http://localhost:3000
+- nginx: http://localhost:80
+- SQL Server: localhost:1433
+
+**Local Dev Credentials:**
+- Admin: `admin@apex.local` / `ApexAdmin2026!`
+- Database: SA / ApexDemo2026Secure
+
+**Next Session:** Continue with Phase 3 (State Management migration)
+
+---
 
 ### October 3, 2025 - Database Name Mismatch Resolution
 
@@ -696,5 +1023,36 @@ DISABLE_EMAIL=true
 
 ---
 
-*Last updated: October 3, 2025*
+*Last updated: January 27, 2026*
+
+---
+
+## 📋 SESSION CONTINUITY NOTES
+
+When resuming work on this project:
+
+1. **Check running services:**
+   ```bash
+   curl http://localhost:3000/health  # Backend
+   curl http://localhost:5173/        # Vite dev server
+   sg docker -c 'docker ps'           # Docker containers
+   ```
+
+2. **Start services if needed:**
+   ```bash
+   # Backend
+   export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+   cd /home/daemonalex/projects/apex-platform/node && node server.js &
+
+   # Vite
+   cd /home/daemonalex/projects/apex-platform && npm run dev &
+
+   # Docker (SQL Server + nginx)
+   sg docker -c 'docker start apex-sqlserver apex-nginx'
+   ```
+
+3. **Current migration phase:** Phase 2 complete, ready for Phase 3 (State Management)
+
+4. **Key principle:** "Strangler Fig" - new modules run alongside legacy code via `window.*` exposure
+
 - NEVER ASK ME TO DO AN ACTION THAT YOU CAN DO YOURSELF

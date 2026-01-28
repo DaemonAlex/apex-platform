@@ -4656,7 +4656,7 @@
                 <div class="form-group">
                     <label for="resetNewPassword">New Password</label>
                     <div style="position: relative;">
-                        <input type="password" id="resetNewPassword" name="newPassword" required placeholder="Enter new password" minlength="12" onchange="validatePasswordRequirements(this)">
+                        <input type="password" id="resetNewPassword" name="newPassword" required placeholder="Enter new password" minlength="12" oninput="validatePasswordRequirements(this)">
                         <button type="button" onclick="generateSecurePassword()" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: #007bff; color: white; border: none; border-radius: 4px; padding: 4px 8px; font-size: 0.8rem; cursor: pointer;">Generate</button>
                     </div>
                     <div id="passwordValidationMessage" style="font-size: 0.85rem; margin-top: 6px; display: none;"></div>
@@ -6842,13 +6842,21 @@
         }
 
         // ==================== UTILITY FUNCTIONS ==================== v2.1
-
+        // Phase 5: These now use modular versions when available
 
         function formatDate(dateString) {
+            // Use new module if available
+            if (window.formatDate && window.formatDate !== formatDate) {
+                return window.formatDate(dateString);
+            }
             return new Date(dateString).toLocaleDateString();
         }
 
         function formatProjectType(type) {
+            // Use new module if available
+            if (window.formatProjectType && window.formatProjectType !== formatProjectType) {
+                return window.formatProjectType(type);
+            }
             const typeMap = {
                 'new-build': 'New Build',
                 'upgrade': 'Upgrade',
@@ -10063,18 +10071,24 @@
         }
 
         function calculateProjectProgress(project) {
+            // Use new module if available (Phase 5 migration)
+            if (window.calculateProjectProgress && window.calculateProjectProgress !== calculateProjectProgress) {
+                return window.calculateProjectProgress(project);
+            }
+            // Legacy fallback
             const tasks = getTasks(project);
             if (tasks.length === 0) return 0;
-
             const completedTasks = tasks.filter(task => task.status === 'completed').length;
             const inProgressTasks = tasks.filter(task => task.status === 'in-progress').length;
-
-            // Give partial credit for in-progress tasks
             const totalProgress = completedTasks + (inProgressTasks * 0.5);
             return Math.round((totalProgress / tasks.length) * 100);
         }
 
         function calculateProjectStatus(project) {
+            // Use new module if available (Phase 5 migration)
+            if (window.calculateProjectStatus && window.calculateProjectStatus !== calculateProjectStatus) {
+                return window.calculateProjectStatus(project);
+            }
             const tasks = getTasks(project);
             if (tasks.length === 0) {
                 // No tasks - keep current status or default to draft
@@ -10776,6 +10790,8 @@
                 try { auditLogEvent({ action: 'project.delete', entity: 'project', entityId: project.id, entityName: project.name, before: project, details: 'Project deleted' }); } catch(_) {}
                 AppState.projects = AppState.projects.filter(p => p.id !== projectId);
 
+                // Notify state bridge of change (Phase 3 state sync)
+                window.notifyStateChange?.('projects', AppState.projects);
 
                 showNotification('Project deleted successfully!', 'success');
 
@@ -13289,10 +13305,15 @@
             return csvContent;
         }
 
-        // Track active notifications for stacking
-        window.__activeNotifications = window.__activeNotifications || [];
-
+        // Notification system - uses new module when available (Phase 5 migration)
         function showNotification(message, type = 'info') {
+            // Use new modular notification system if available
+            if (window.APEX_Notifications) {
+                return window.APEX_Notifications.show(message, type);
+            }
+
+            // Legacy fallback
+            window.__activeNotifications = window.__activeNotifications || [];
             const notification = document.createElement('div');
             notification.className = `notification notification-${type}`;
             notification.innerHTML = `
@@ -13301,35 +13322,22 @@
                 </div>
             `;
 
-            // Calculate position based on existing notifications
             const baseTop = 100;
             const spacing = 10;
-            const notificationHeight = 60; // Approximate height
+            const notificationHeight = 60;
 
-            // Clean up any removed notifications from tracking
             window.__activeNotifications = window.__activeNotifications.filter(n => document.body.contains(n));
-
-            // Calculate top position
             const topPosition = baseTop + (window.__activeNotifications.length * (notificationHeight + spacing));
             notification.style.top = `${topPosition}px`;
-
-            // Add to tracking
             window.__activeNotifications.push(notification);
-
             document.body.appendChild(notification);
 
             setTimeout(() => {
-                // Remove from tracking
                 const index = window.__activeNotifications.indexOf(notification);
-                if (index > -1) {
-                    window.__activeNotifications.splice(index, 1);
-                }
-
-                // Slide up remaining notifications
+                if (index > -1) window.__activeNotifications.splice(index, 1);
                 window.__activeNotifications.forEach((n, i) => {
                     n.style.top = `${baseTop + (i * (notificationHeight + spacing))}px`;
                 });
-
                 notification.remove();
             }, 3000);
         }
@@ -16938,6 +16946,11 @@
                 AppState.backendAuth = { token: data.token, refreshToken: data.refreshToken, email };
                 AppState.config.backendEnabled = true;
 
+                // Sync with new modular TokenManager (Phase 3 migration)
+                if (window.TokenManager) {
+                    window.TokenManager.setToken(data.token);
+                }
+
                 // Normalize user shape for UI compatibility
                 const user = data.user || {};
                 if (user.Role?.name && !user.role) user.role = user.Role.name;
@@ -16987,6 +17000,10 @@
                 AppState.isLoggedIn = true;
                 AppState.user = user;
                 AppState.currentView = 'dashboard';
+
+                // Notify state bridge of login (Phase 3 state sync)
+                window.notifyStateChange?.('user', user);
+                window.notifyStateChange?.('isLoggedIn', true);
 
                 // Record login in audit log
                 try {
@@ -17253,6 +17270,52 @@
             }
         };
 
+        // Password validation using new module (Phase 5 migration)
+        window.validatePasswordRequirements = function(input) {
+            const messageDiv = document.getElementById('passwordValidationMessage');
+            if (!messageDiv) return;
+
+            const password = input.value;
+            if (!password) {
+                messageDiv.style.display = 'none';
+                return;
+            }
+
+            // Use new module if available
+            if (window.validatePassword) {
+                const result = window.validatePassword(password);
+                const strengthInfo = window.getPasswordStrengthLabel ?
+                    window.getPasswordStrengthLabel(result.strength) :
+                    { label: 'Unknown', color: '#666' };
+
+                messageDiv.style.display = 'block';
+                if (result.isValid) {
+                    messageDiv.innerHTML = `
+                        <span style="color: ${strengthInfo.color}; font-weight: 600;">
+                            ✓ Password strength: ${strengthInfo.label}
+                        </span>
+                        <div style="height: 4px; background: #e5e7eb; border-radius: 2px; margin-top: 4px;">
+                            <div style="height: 100%; width: ${result.strength}%; background: ${strengthInfo.color}; border-radius: 2px; transition: all 0.3s;"></div>
+                        </div>
+                    `;
+                } else {
+                    messageDiv.innerHTML = `
+                        <span style="color: #ef4444;">✗ ${result.errors[0]}</span>
+                        <div style="height: 4px; background: #e5e7eb; border-radius: 2px; margin-top: 4px;">
+                            <div style="height: 100%; width: ${result.strength}%; background: ${strengthInfo.color}; border-radius: 2px; transition: all 0.3s;"></div>
+                        </div>
+                    `;
+                }
+            } else {
+                // Legacy fallback
+                const isValid = password.length >= 12 && /[A-Z]/.test(password) && /[a-z]/.test(password) && /[0-9]/.test(password) && /[!@#$%^&*]/.test(password);
+                messageDiv.style.display = 'block';
+                messageDiv.innerHTML = isValid ?
+                    '<span style="color: #22c55e;">✓ Password meets requirements</span>' :
+                    '<span style="color: #ef4444;">✗ Password does not meet requirements</span>';
+            }
+        };
+
         // Secure password generator
         window.generateSecurePassword = function() {
             const lowercase = 'abcdefghijklmnopqrstuvwxyz';
@@ -17306,6 +17369,16 @@
             AppState.isLoggedIn = false;
             AppState.user = null;
             AppState.currentView = 'login';
+            AppState.backendAuth = null;
+
+            // Notify state bridge of logout (Phase 3 state sync)
+            window.notifyStateChange?.('user', null);
+            window.notifyStateChange?.('isLoggedIn', false);
+
+            // Clear tokens from new modular TokenManager (Phase 3 migration)
+            if (window.TokenManager) {
+                window.TokenManager.clearToken();
+            }
 
             // Show login screen and hide app
             document.getElementById('loginScreen').style.display = 'flex';
@@ -17420,25 +17493,31 @@
 
         async function loadProjectsFromBackend() {
             try {
-                // console.log('🔄 loadProjectsFromBackend called from:', new Error().stack?.split('\n')[1]);
-                const token = AppState.backendAuth?.token;
-                if (!token) throw new Error('Not authenticated');
-                const res = await fetch(AppState.config.apiUrl + '/projects?limit=1000', {
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || 'Failed to load projects');
-                
+                // Phase 3 Migration: Use new centralized API client
+                let data;
+                if (window.projectsApi) {
+                    // New modular API client
+                    data = await window.projectsApi.getAll();
+                } else {
+                    // Fallback to legacy fetch
+                    const token = AppState.backendAuth?.token;
+                    if (!token) throw new Error('Not authenticated');
+                    const res = await fetch(AppState.config.apiUrl + '/projects?limit=1000', {
+                        headers: { 'Authorization': 'Bearer ' + token }
+                    });
+                    data = await res.json();
+                    if (!res.ok) throw new Error(data.error || 'Failed to load projects');
+                }
+
                 const projects = Array.isArray(data) ? data : (data.projects || []);
-                
-                // console.log('🔍 API returned', projects.length, 'projects');
-                // projects.forEach((p, i) => console.log(`Project ${i + 1}: ${p.name} has ${p.tasks?.length || 0} tasks`));
-                
+
                 // Projects come with tasks from the backend API
-                AppState.projects = projects.map(normalizeProject);
-                
-                // console.log('🏁 After normalization:', AppState.projects.length, 'projects');
-                // AppState.projects.forEach((p, i) => console.log(`Normalized ${i + 1}: ${p.name} has ${p.tasks?.length || 0} tasks`));
+                // Use new normalizeProject if available, otherwise fallback
+                const normalize = window.normalizeProject || normalizeProject;
+                AppState.projects = projects.map(normalize);
+
+                // Notify state bridge of change (Phase 3 state sync)
+                window.notifyStateChange?.('projects', AppState.projects);
 
                 if (typeof renderProjectsView === 'function') {
                     try { renderProjectsView(); } catch (_) {}
@@ -17563,15 +17642,39 @@
         }
 
         async function apiFetch(path, options = {}) {
+            // Phase 3 Migration: Use new centralized API client when available
+            if (window.api && window.APEX_FEATURES?.USE_NEW_API_CLIENT !== false) {
+                const method = (options.method || 'GET').toUpperCase();
+                const body = options.body ? JSON.parse(options.body) : undefined;
+
+                try {
+                    switch (method) {
+                        case 'GET':
+                            return await window.api.get(path);
+                        case 'POST':
+                            return await window.api.post(path, body);
+                        case 'PUT':
+                            return await window.api.put(path, body);
+                        case 'DELETE':
+                            return await window.api.delete(path);
+                        default:
+                            return await window.api.get(path);
+                    }
+                } catch (apiError) {
+                    // If new API client fails, throw the error (it handles 401 etc)
+                    throw apiError;
+                }
+            }
+
+            // Fallback to legacy implementation
             const url = AppState.config.apiUrl + path;
             const headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
             if (AppState.backendAuth?.token) {
                 headers['Authorization'] = 'Bearer ' + AppState.backendAuth.token;
-                headers['x-auth-token'] = AppState.backendAuth.token; // Also send x-auth-token for attachments API
+                headers['x-auth-token'] = AppState.backendAuth.token;
             }
             let res = await fetchWithTimeout(url, { ...options, headers }, options.timeoutMs || 15000);
             if (res.status === 401 && AppState.backendAuth?.refreshToken) {
-                // try refresh once
                 const rr = await fetchWithTimeout(AppState.config.apiUrl + '/auth/refresh', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ refreshToken: AppState.backendAuth.refreshToken })
@@ -17588,8 +17691,6 @@
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data?.error || res.statusText || 'Request failed');
             return data;
-
-
         }
 
         // ==================== GLOBAL UTILITY FUNCTIONS ====================
@@ -18801,5 +18902,8 @@
         window.handleForgotPassword = handleForgotPassword;
 
     </script>
+
+    <!-- Modern ES Modules Bridge (Vite) - Phase 1 Modularization -->
+    <script type="module" src="/src/main.js"></script>
 </body>
 </html>

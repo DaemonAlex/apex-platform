@@ -155,7 +155,7 @@ router.post('/fix-active-projects', async (req, res) => {
       updatedCount++;
     }
     
-    await pool.close();
+    // Connection pool kept open for reuse
     
     res.json({ 
       success: true, 
@@ -359,7 +359,7 @@ router.post('/load-full-wintrust-data', async (req, res) => {
       console.log(`✅ Loaded: ${project.name}`);
     }
     
-    await pool.close();
+    // Connection pool kept open for reuse
     
     res.json({
       success: true,
@@ -408,8 +408,6 @@ router.post('/add-time-tracking', async (req, res) => {
   } catch (error) {
     console.error('Error adding time tracking columns:', error);
     res.status(500).json({ error: 'Failed to add time tracking columns', details: error.message });
-  } finally {
-    if (pool) await pool.close();
   }
 });
 
@@ -512,8 +510,6 @@ router.post('/update-time-tracking', async (req, res) => {
   } catch (error) {
     console.error('Error updating time tracking:', error);
     res.status(500).json({ error: 'Failed to update time tracking', details: error.message });
-  } finally {
-    if (pool) await pool.close();
   }
 });
 
@@ -678,7 +674,7 @@ router.post('/add-rag-status', async (req, res) => {
       console.log(`✅ ${project.name}: ${rag.ragStatus} - ${rag.ragReason}`);
     }
     
-    await pool.close();
+    // Connection pool kept open for reuse
     
     res.json({
       success: true,
@@ -714,8 +710,6 @@ router.post('/reload-projects', async (req, res) => {
   } catch (error) {
     console.error('Error reloading projects:', error);
     res.status(500).json({ error: 'Failed to reload projects', details: error.message });
-  } finally {
-    if (pool) await pool.close();
   }
 });
 
@@ -750,8 +744,6 @@ router.post('/cleanup-database', async (req, res) => {
   } catch (error) {
     console.error('Error cleaning up database:', error);
     res.status(500).json({ error: 'Failed to cleanup database', details: error.message });
-  } finally {
-    if (pool) await pool.close();
   }
 });
 
@@ -774,7 +766,7 @@ router.post('/cleanup-users', async (req, res) => {
     // Get remaining users
     const remainingUsers = await pool.request().query('SELECT id, name, email, role FROM Users');
 
-    await pool.close();
+    // Connection pool kept open for reuse
 
     res.json({
       message: 'User cleanup completed',
