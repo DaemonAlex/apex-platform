@@ -647,28 +647,40 @@ npm run preview  # Preview production build
 
 ## 🗺️ Roadmap
 
-### Short-term (1-2 months)
+### v7.1 - Critical Priority (Next Release)
+
+> **Focus:** Testing infrastructure and XSS/Cookie security. These are the highest-risk gaps for an application handling financial project data.
+
+#### 🔴 Testing Infrastructure (Highest Priority)
+- [ ] **Unit Tests:** Jest + Testing Library for core modules
+- [ ] **API Tests:** Supertest for backend endpoint coverage
+- [ ] **CI/CD Pipeline:** GitHub Actions for automated testing on PR
+- [ ] **Code Coverage:** Target 80% coverage on business logic
+
+#### 🔴 XSS + Token Security (Must Ship Together)
+- [ ] **XSS Protection:** Implement DOMPurify for all innerHTML usage (82 instances)
+- [ ] **httpOnly Cookies:** Move JWT from localStorage to secure cookies
+- [ ] **Content Security Policy:** Add strict CSP headers
+- [ ] **CSRF Protection:** Token-based CSRF for cookie auth
 
 #### Security Enhancements
-- [ ] **XSS Protection:** Implement DOMPurify for all innerHTML usage
-- [ ] **Content Security Policy:** Add strict CSP headers
 - [ ] **Input Validation:** Comprehensive validation middleware (express-validator)
 - [ ] **Rate Limiting:** Per-endpoint rate limits with express-rate-limit
 - [ ] **Token Refresh:** Proper refresh token rotation
-- [ ] **httpOnly Cookies:** Move JWT from localStorage to secure cookies
+
+### v7.2 - Short-term (1-2 months)
 
 #### Code Quality
 - [x] **Break apart monolithic HTML:** ✅ Modularized with Vite + ES Modules (6,989 lines extracted)
 - [ ] **TypeScript Migration:** Add type safety to backend
 - [ ] **ESLint Configuration:** Enforce code style
-- [ ] **Unit Tests:** Add comprehensive test coverage
-- [ ] **CI/CD Pipeline:** Automated testing and deployment
 
-### Mid-term (3-6 months)
+### v8.0 - Mid-term (3-6 months)
 
 #### Architecture Improvements
-- [ ] **Component-Based Frontend:** Migrate to React or Vue
+- [ ] **Component-Based Frontend:** Migrate to React or Vue (addresses state management brittleness)
 - [x] **Build System:** ✅ Vite for bundling, HMR, and optimization
+- [ ] **State Management:** Redux/Zustand (replaces custom reactive store)
 - [ ] **Code Splitting:** Lazy loading for better performance
 - [ ] **WebSocket Support:** Real-time updates
 - [ ] **Redis Caching:** Improve query performance

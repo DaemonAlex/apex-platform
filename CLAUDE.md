@@ -95,6 +95,16 @@ Converting the 18,000+ line monolithic `index.html` to a modern ES Module archit
 | Phase 4 | ✅ Complete | UI Modules (Auth, Notifications, Modal) |
 | Phase 5 | ✅ Complete | Full Migration (legacy→module bridges) |
 
+### ⚠️ v7.1 Priority Areas
+
+While v7.0 is production-ready, these gaps should be addressed in the next iteration:
+
+| Priority | Area | Risk | Action |
+|----------|------|------|--------|
+| 🔴 Critical | **Testing** | Manual verification only; no regression protection for financial data | Add Jest + Supertest, target 80% coverage |
+| 🔴 Critical | **XSS + Cookies** | localStorage JWTs vulnerable to XSS (82 innerHTML instances) | DOMPurify + httpOnly cookies (must ship together) |
+| 🟡 High | **State Management** | Custom reactive store will become brittle as app grows | Plan React/Vue migration or adopt Redux/Zustand |
+
 ### Directory Structure
 ```
 /apex-platform
