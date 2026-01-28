@@ -4,6 +4,9 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
+// Import authentication middleware
+const { authenticateToken, requireRole } = require('./middleware/auth');
+
 // Import routes
 const authRoutes = require('./routes/auth');
 const projectRoutes = require('./routes/projects');
@@ -58,16 +61,19 @@ app.get('/health', (req, res) => {
 });
 
 // API Routes
+// Public routes (no authentication required)
 app.use('/api/auth', authRoutes);
-app.use('/api/projects', projectRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/roles', roleRoutes);
-app.use('/api/settings', settingsRoutes);
-app.use('/api/audit', auditRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/attachments', attachmentsRoutes);
-app.use('/api/migrate', loadSampleRoutes);
-app.use('/api/room-status', roomStatusRoutes);
+
+// Protected routes (authentication required)
+app.use('/api/projects', authenticateToken, projectRoutes);
+app.use('/api/users', authenticateToken, userRoutes);
+app.use('/api/roles', authenticateToken, roleRoutes);
+app.use('/api/settings', authenticateToken, settingsRoutes);
+app.use('/api/audit', authenticateToken, auditRoutes);
+app.use('/api/admin', authenticateToken, requireRole(['admin', 'superadmin', 'owner']), adminRoutes);
+app.use('/api/attachments', authenticateToken, attachmentsRoutes);
+app.use('/api/migrate', authenticateToken, requireRole(['admin', 'superadmin']), loadSampleRoutes);
+app.use('/api/room-status', authenticateToken, roomStatusRoutes);
 // app.use('/api/fieldops', fieldopsRoutes);
 // app.use('/metrics', metricsRoutes);
 // app.use('/insights', insightsRoutes);
