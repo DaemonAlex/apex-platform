@@ -93,7 +93,7 @@ router.get('/', async (req, res) => {
       updatedAt: row.updated_at
     }));
 
-    await pool.close();
+    // Connection pool kept open for reuse
     res.json({ rooms });
 
   } catch (error) {
@@ -132,7 +132,7 @@ router.post('/', async (req, res) => {
              @check_1_video, @check_2_display, @check_3_audio, @check_4_camera, @check_5_network, @notes)
         `);
 
-      await pool.close();
+      // Connection pool kept open for reuse
       return res.json({ success: true, message: 'Room check recorded successfully' });
 
     } else if (room) {
@@ -157,11 +157,11 @@ router.post('/', async (req, res) => {
             VALUES (@room_id, @name, @schedule_day, @schedule_day_name);
         `);
 
-      await pool.close();
+      // Connection pool kept open for reuse
       return res.json({ success: true, message: 'Room created successfully' });
 
     } else {
-      await pool.close();
+      // Connection pool kept open for reuse
       return res.status(400).json({ error: 'Invalid request: room or checkData required' });
     }
 
@@ -196,7 +196,7 @@ router.get('/:roomId/history', async (req, res) => {
       checkedAt: row.checked_at
     }));
 
-    await pool.close();
+    // Connection pool kept open for reuse
     res.json({ history });
 
   } catch (error) {
@@ -216,7 +216,7 @@ router.delete('/:roomId', async (req, res) => {
       .input('room_id', sql.NVarChar, roomId)
       .query('UPDATE Rooms SET deleted_at = GETDATE() WHERE room_id = @room_id');
 
-    await pool.close();
+    // Connection pool kept open for reuse
     res.json({ success: true, message: 'Room deleted successfully (all check history preserved)' });
 
   } catch (error) {

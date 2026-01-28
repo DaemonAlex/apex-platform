@@ -189,7 +189,7 @@ router.post('/login', async (req, res) => {
       }
     });
 
-    await pool.close();
+    // Connection pool kept open for reuse
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Login failed', details: error.message });
@@ -258,7 +258,7 @@ router.post('/register', async (req, res) => {
       }
     });
 
-    await pool.close();
+    // Connection pool kept open for reuse
   } catch (error) {
     console.error('Register error:', error);
     res.status(500).json({ error: 'Registration failed', details: error.message });
@@ -283,7 +283,7 @@ router.post('/forgot-password', async (req, res) => {
 
     if (userResult.recordset.length === 0) {
       // Don't reveal if email exists - security best practice
-      await pool.close();
+      // Connection pool kept open for reuse
       return res.json({ message: 'If this email exists, a reset link has been sent.' });
     }
 
@@ -300,7 +300,7 @@ router.post('/forgot-password', async (req, res) => {
       `);
 
     if (recentRequests.recordset[0].count >= 10) {
-      await pool.close();
+      // Connection pool kept open for reuse
       return res.status(429).json({ error: 'Too many reset requests. Please try again later.' });
     }
 
@@ -334,7 +334,7 @@ router.post('/forgot-password', async (req, res) => {
       console.log(`⚠️ Fallback: Password reset link for ${email}: ${resetLink}`);
     }
 
-    await pool.close();
+    // Connection pool kept open for reuse
     res.json({ message: 'If this email exists, a reset link has been sent.' });
 
   } catch (error) {
@@ -378,7 +378,7 @@ router.post('/reset-password', async (req, res) => {
       `);
 
     if (tokenResult.recordset.length === 0) {
-      await pool.close();
+      // Connection pool kept open for reuse
       return res.status(400).json({ error: 'Invalid or expired reset token' });
     }
 
@@ -426,7 +426,7 @@ router.post('/reset-password', async (req, res) => {
         AND (used = 1 OR expires_at < GETDATE())
       `);
 
-    await pool.close();
+    // Connection pool kept open for reuse
     res.json({ message: 'Password reset successfully' });
 
   } catch (error) {

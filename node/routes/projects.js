@@ -121,7 +121,7 @@ async function initializeProjectsTable() {
     }
   }
 
-  await pool.close();
+  // pool kept open
 }
 
 // Get all projects
@@ -142,14 +142,6 @@ router.get('/', async (req, res) => {
   } catch (error) {
     console.error('Get projects error:', error);
     res.status(500).json({ error: 'Failed to fetch projects', details: error.message });
-  } finally {
-    if (pool) {
-      try {
-        await pool.close();
-      } catch (e) {
-        console.error('Error closing pool:', e);
-      }
-    }
   }
 });
 
@@ -169,7 +161,7 @@ router.get('/:id', async (req, res) => {
     project.tasks = project.tasks ? JSON.parse(project.tasks) : [];
 
     res.json(project);
-    await pool.close();
+    // pool kept open
   } catch (error) {
     console.error('Get project error:', error);
     res.status(500).json({ error: 'Failed to fetch project', details: error.message });
@@ -190,7 +182,7 @@ router.get('/:id/children', async (req, res) => {
     }));
 
     res.json({ projects });
-    await pool.close();
+    // pool kept open
   } catch (error) {
     console.error('Get child projects error:', error);
     res.status(500).json({ error: 'Failed to fetch child projects', details: error.message });
@@ -254,7 +246,7 @@ router.post('/', async (req, res) => {
     }
 
     res.status(201).json({ project });
-    await pool.close();
+    // pool kept open
   } catch (error) {
     console.error('Create project error:', error);
     res.status(500).json({ error: 'Failed to create project', details: error.message });
@@ -320,7 +312,7 @@ router.put('/:id', async (req, res) => {
     }
 
     res.json({ project });
-    await pool.close();
+    // pool kept open
   } catch (error) {
     console.error('Update project error:', error);
     res.status(500).json({ error: 'Failed to update project', details: error.message });
@@ -358,7 +350,7 @@ router.delete('/:id', async (req, res) => {
     }
 
     res.json({ message: 'Project deleted successfully' });
-    await pool.close();
+    // pool kept open
   } catch (error) {
     console.error('Delete project error:', error);
     res.status(500).json({ error: 'Failed to delete project', details: error.message });
@@ -446,8 +438,6 @@ router.post('/:projectId/time-entry', async (req, res) => {
   } catch (error) {
     console.error('Add time entry error:', error);
     res.status(500).json({ error: 'Failed to add time entry', details: error.message });
-  } finally {
-    if (pool) await pool.close();
   }
 });
 
@@ -496,7 +486,7 @@ router.put('/:projectId/tasks/:taskId', async (req, res) => {
       task: found.task
     });
 
-    await pool.close();
+    // pool kept open
   } catch (error) {
     console.error('Update task error:', error);
     res.status(500).json({ error: 'Failed to update task', details: error.message });
@@ -550,7 +540,7 @@ router.post('/:projectId/tasks', async (req, res) => {
       task: taskWithDefaults
     });
 
-    await pool.close();
+    // pool kept open
   } catch (error) {
     console.error('Create task error:', error);
     res.status(500).json({ error: 'Failed to create task', details: error.message });
@@ -595,7 +585,7 @@ router.delete('/:projectId/tasks/:taskId', async (req, res) => {
 
     res.json({ message: 'Task deleted successfully' });
 
-    await pool.close();
+    // pool kept open
   } catch (error) {
     console.error('Delete task error:', error);
     res.status(500).json({ error: 'Failed to delete task', details: error.message });
@@ -615,7 +605,7 @@ async function updateParentProjectRollups(parentProjectId) {
     const children = childrenResult.recordset;
 
     if (children.length === 0) {
-      await pool.close();
+      // pool kept open
       return; // No children, nothing to rollup
     }
 
@@ -670,7 +660,7 @@ async function updateParentProjectRollups(parentProjectId) {
         WHERE id = @id
       `);
 
-    await pool.close();
+    // pool kept open
     console.log(`✅ Updated rollups for parent project ${parentProjectId}`);
   } catch (error) {
     console.error('Update parent rollups error:', error);

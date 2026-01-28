@@ -39,7 +39,7 @@ router.post('/log', async (req, res) => {
 
     res.json({ message: 'Audit log entry created successfully' });
     
-    await pool.close();
+    // Connection pool kept open for reuse
   } catch (error) {
     console.error('Audit log error:', error);
     res.status(500).json({ error: 'Failed to create audit log entry', details: error.message });
@@ -81,7 +81,7 @@ router.get('/log', async (req, res) => {
       total: result.recordset.length
     });
     
-    await pool.close();
+    // Connection pool kept open for reuse
   } catch (error) {
     console.error('Get audit log error:', error);
     res.status(500).json({ error: 'Failed to retrieve audit log', details: error.message });

@@ -47,7 +47,7 @@ router.get('/', async (req, res) => {
     });
     
     res.json({ users });
-    await pool.close();
+    // Connection pool kept open for reuse
   } catch (error) {
     console.error('Get users error:', error);
     res.status(500).json({ error: 'Failed to fetch users', details: error.message });
@@ -75,7 +75,7 @@ router.put('/:id', async (req, res) => {
       .query('SELECT id FROM Users WHERE id = @id');
 
     if (existingUser.recordset.length === 0) {
-      await pool.close();
+      // Connection pool kept open for reuse
       return res.status(404).json({ error: 'User not found' });
     }
 
@@ -108,7 +108,7 @@ router.put('/:id', async (req, res) => {
     };
 
     res.json({ user: responseUser, message: 'User updated successfully' });
-    await pool.close();
+    // Connection pool kept open for reuse
   } catch (error) {
     console.error('Update user error:', error);
     res.status(500).json({ error: 'Failed to update user', details: error.message });
@@ -137,7 +137,7 @@ router.put('/:id/password', async (req, res) => {
       .query('SELECT password FROM Users WHERE id = @id');
 
     if (userResult.recordset.length === 0) {
-      await pool.close();
+      // Connection pool kept open for reuse
       return res.status(404).json({ error: 'User not found' });
     }
 
@@ -148,7 +148,7 @@ router.put('/:id/password', async (req, res) => {
     const isCurrentPasswordValid = await bcrypt.compare(currentPassword, currentUser.password);
 
     if (!isCurrentPasswordValid) {
-      await pool.close();
+      // Connection pool kept open for reuse
       return res.status(400).json({ error: 'Current password is incorrect' });
     }
 
@@ -162,7 +162,7 @@ router.put('/:id/password', async (req, res) => {
       .input('password', sql.NVarChar, newPasswordHash)
       .query('UPDATE Users SET password = @password, updated_at = GETDATE() WHERE id = @id');
 
-    await pool.close();
+    // Connection pool kept open for reuse
     res.json({ message: 'Password changed successfully' });
 
   } catch (error) {
@@ -185,7 +185,7 @@ router.put('/:id/preferences', async (req, res) => {
       .query('SELECT id FROM Users WHERE id = @id');
 
     if (existingUser.recordset.length === 0) {
-      await pool.close();
+      // Connection pool kept open for reuse
       return res.status(404).json({ error: 'User not found' });
     }
 
@@ -201,7 +201,7 @@ router.put('/:id/preferences', async (req, res) => {
         WHERE id = @id
       `);
 
-    await pool.close();
+    // Connection pool kept open for reuse
     res.json({ message: 'Preferences updated successfully', preferences });
 
   } catch (error) {
@@ -233,7 +233,7 @@ router.put('/:id/avatar', async (req, res) => {
       .query('SELECT id FROM Users WHERE id = @id');
 
     if (existingUser.recordset.length === 0) {
-      await pool.close();
+      // Connection pool kept open for reuse
       return res.status(404).json({ error: 'User not found' });
     }
 
@@ -247,7 +247,7 @@ router.put('/:id/avatar', async (req, res) => {
         WHERE id = @id
       `);
 
-    await pool.close();
+    // Connection pool kept open for reuse
     res.json({ message: 'Avatar updated successfully' });
 
   } catch (error) {
@@ -269,7 +269,7 @@ router.delete('/:id/avatar', async (req, res) => {
       .query('SELECT id FROM Users WHERE id = @id');
 
     if (existingUser.recordset.length === 0) {
-      await pool.close();
+      // Connection pool kept open for reuse
       return res.status(404).json({ error: 'User not found' });
     }
 
@@ -282,7 +282,7 @@ router.delete('/:id/avatar', async (req, res) => {
         WHERE id = @id
       `);
 
-    await pool.close();
+    // Connection pool kept open for reuse
     res.json({ message: 'Avatar removed successfully' });
 
   } catch (error) {
@@ -308,7 +308,7 @@ router.post('/', async (req, res) => {
       .query('SELECT id FROM users WHERE email = @email');
 
     if (existingUser.recordset.length > 0) {
-      await pool.close();
+      // Connection pool kept open for reuse
       return res.status(409).json({ error: 'User with this email already exists' });
     }
 
@@ -329,7 +329,7 @@ router.post('/', async (req, res) => {
         VALUES (@name, @email, @password, @role, @passwordExpires, GETDATE(), GETDATE())
       `);
 
-    await pool.close();
+    // Connection pool kept open for reuse
 
     const newUser = result.recordset[0];
     res.status(201).json({
@@ -363,7 +363,7 @@ router.delete('/:id', async (req, res) => {
       .query('SELECT id, email FROM users WHERE id = @id');
 
     if (existingUser.recordset.length === 0) {
-      await pool.close();
+      // Connection pool kept open for reuse
       return res.status(404).json({ error: 'User not found' });
     }
 
@@ -372,7 +372,7 @@ router.delete('/:id', async (req, res) => {
       .input('id', sql.Int, userId)
       .query('DELETE FROM users WHERE id = @id');
 
-    await pool.close();
+    // Connection pool kept open for reuse
     res.json({ message: 'User deleted successfully' });
 
   } catch (error) {
@@ -394,7 +394,7 @@ router.post('/:id/reset-password', async (req, res) => {
       .query('SELECT id, email FROM users WHERE id = @id');
 
     if (existingUser.recordset.length === 0) {
-      await pool.close();
+      // Connection pool kept open for reuse
       return res.status(404).json({ error: 'User not found' });
     }
 
@@ -418,7 +418,7 @@ router.post('/:id/reset-password', async (req, res) => {
         WHERE id = @id
       `);
 
-    await pool.close();
+    // Connection pool kept open for reuse
     res.json({
       message: 'Password reset successfully',
       temporaryPassword: tempPassword
