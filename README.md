@@ -709,9 +709,8 @@ npm run preview  # Preview production build
 We welcome contributions! Please follow these guidelines:
 
 ### Before Contributing
-1. Read [CLAUDE.md](CLAUDE.md) for development methodology
-2. Review [ASRB_SECURITY_AUDIT_2026.md](ASRB_SECURITY_AUDIT_2026.md) for security requirements
-3. Check existing issues and pull requests
+1. Review [ASRB_SECURITY_AUDIT_2026.md](ASRB_SECURITY_AUDIT_2026.md) for security requirements
+2. Check existing issues and pull requests
 
 ### Contribution Process
 ```bash
@@ -826,9 +825,7 @@ SOFTWARE.
 
 ## 🙏 Acknowledgments
 
-- **Development:** APEX Development Team
-- **Security Audit:** Internal Security Team
-- **Client:** Wintrust Bank
+- **Development:** DaemonAlex
 - **Built with:** Node.js, Express, MSSQL, Docker, Nginx
 - **Infrastructure:** Docker, Nginx, Vite
 
@@ -836,7 +833,7 @@ SOFTWARE.
 
 ## 📞 Quick Links
 
-- **Live Demo:** https://apex.daemonscripts.com (if publicly accessible)
+- **Live Demo:** https://apex.daemonscripts.com 
 - **GitHub Repository:** https://github.com/DaemonAlex/apex-platform
 - **Documentation:** [See docs folder](docs/)
 - **Security Audit:** [ASRB_SECURITY_AUDIT_2026.md](ASRB_SECURITY_AUDIT_2026.md)
