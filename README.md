@@ -1,11 +1,14 @@
-# APEX Platform - AV Project Management System
+# APEX Platform - AV Project Management System (PostgreSQL Edition)
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-7.1--security-green.svg)](#)
+[![Version](https://img.shields.io/badge/version-7.1--postgres-green.svg)](#)
 [![Security](https://img.shields.io/badge/security-ASRB%205.1%20Compliant-brightgreen.svg)](#)
+[![Database](https://img.shields.io/badge/PostgreSQL-16+-4169E1?logo=postgresql&logoColor=white)](#)
 [![HTML5](https://img.shields.io/badge/HTML5-E34F26?logo=html5&logoColor=white)](#)
 [![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?logo=javascript&logoColor=black)](#)
 [![Node.js](https://img.shields.io/badge/Node.js-339933?logo=node.js&logoColor=white)](#)
+
+> **Branch:** `postgresSQL` — This branch uses **PostgreSQL** as the database backend. The `main` branch uses MSSQL (SQL Server).
 
 A comprehensive, **enterprise-grade** Audio-Visual Project Management Platform designed for professional AV integrators, project managers, and field operations teams. Built for **Wintrust Bank's** installation and maintenance operations.
 
@@ -85,17 +88,17 @@ A comprehensive, **enterprise-grade** Audio-Visual Project Management Platform d
 
 **Required:**
 - Docker & Docker Compose
-- SQL Server 2019+ (or MSSQL container)
+- PostgreSQL 16+ (or PostgreSQL container)
 - Node.js 18+ (for backend)
 - Valid SSL certificate (production)
 
 **Environment Variables:**
 ```bash
 # REQUIRED - Application will not start without these
-DB_USERNAME=SA
+DB_USERNAME=apex_user
 DB_PASSWORD=<your-secure-password>
-DB_HOST=sqlserver-prod
-DB_PORT=1433
+DB_HOST=postgres
+DB_PORT=5432
 DB_DATABASE=APEX_PROD
 JWT_SECRET=<64-character-hex-secret>
 
@@ -126,10 +129,10 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```bash
 # Create node/.env file
 cat > node/.env << EOF
-DB_USERNAME=SA
+DB_USERNAME=apex_user
 DB_PASSWORD=YourNewSecurePassword123!@#
-DB_HOST=sqlserver-prod
-DB_PORT=1433
+DB_HOST=postgres
+DB_PORT=5432
 DB_DATABASE=APEX_PROD
 JWT_SECRET=a3f7b8c2d5e9f1a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8a0b2c4d6e8f0a2
 DISABLE_EMAIL=true
@@ -148,12 +151,13 @@ docker-compose up -d
 # 1. Create network
 docker network create apex-network
 
-# 2. Start SQL Server
-docker run -d --name sqlserver-prod --network apex-network \
-  -e ACCEPT_EULA=Y \
-  -e SA_PASSWORD=YourNewSecurePassword123!@# \
-  -p 1433:1433 \
-  mcr.microsoft.com/mssql/server:2019-latest
+# 2. Start PostgreSQL
+docker run -d --name postgres --network apex-network \
+  -e POSTGRES_USER=apex_user \
+  -e POSTGRES_PASSWORD=YourNewSecurePassword123!@# \
+  -e POSTGRES_DB=APEX_PROD \
+  -p 5432:5432 \
+  postgres:16-alpine
 
 # 3. Start Node.js backend
 docker run -d --name apex-node-prod --network apex-network \
@@ -247,10 +251,11 @@ if (missingEnvVars.length > 0) {
 
 #### Layer 2: SQL Injection Protection
 ```javascript
-// Parameterized queries
-const result = await pool.request()
-  .input('projectId', sql.NVarChar, projectId)
-  .query('SELECT * FROM Projects WHERE id = @projectId');
+// Parameterized queries (PostgreSQL positional params)
+const result = await pool.query(
+  'SELECT * FROM Projects WHERE id = $1',
+  [projectId]
+);
 
 // Input validation with regex
 if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(columnName)) {
@@ -314,13 +319,12 @@ echo "New JWT Secret: $NEW_JWT_SECRET"
 
 #### Step 2: Update Database Password
 ```bash
-# Connect to SQL Server
-docker exec -it sqlserver-prod /opt/mssql-tools/bin/sqlcmd -S localhost -U SA -P 'ApexProd2024!'
+# Connect to PostgreSQL
+docker exec -it postgres psql -U apex_user -d APEX_PROD
 
 # Change password
-ALTER LOGIN SA WITH PASSWORD = 'YourNewSecurePassword123!@#';
-GO
-quit
+ALTER USER apex_user WITH PASSWORD 'YourNewSecurePassword123!@#';
+\q
 ```
 
 #### Step 3: Update Environment Variables
@@ -387,7 +391,7 @@ curl -X POST http://localhost:3000/api/auth/login \
 
 **Backend:**
 - Node.js 18+ with Express.js
-- MSSQL (SQL Server 2019+)
+- PostgreSQL 16+ (via `pg` / node-postgres)
 - JWT authentication
 - Connection pooling for efficiency
 
@@ -395,7 +399,7 @@ curl -X POST http://localhost:3000/api/auth/login \
 - Docker containers for all services
 - Nginx reverse proxy
 - Cloudflare Tunnel for external access
-- SQL Server for persistent storage
+- PostgreSQL for persistent storage
 
 ### System Components
 
@@ -423,7 +427,7 @@ curl -X POST http://localhost:3000/api/auth/login \
          └─────────┬──────────┘
                    │
          ┌─────────▼─────────┐
-         │  SQL Server (1433) │
+         │ PostgreSQL (5432)  │
          │   - APEX_PROD DB   │
          │   - Connection Pool│
          └────────────────────┘
@@ -437,7 +441,7 @@ curl -X POST http://localhost:3000/api/auth/login \
    - All subsequent requests include `x-auth-token` header
 
 2. **Project Operations:**
-   - Frontend → `/api/projects` → Centralized `poolPromise`
+   - Frontend → `/api/projects` → Centralized `pool`
    - Backend filter: `WHERE id LIKE 'WTB_%'`
    - Results cached client-side for offline capability
 
@@ -472,7 +476,7 @@ curl -X POST http://localhost:3000/api/auth/login \
 - SSL certificate (Let's Encrypt or commercial)
 
 **Database:**
-- SQL Server 2019+ (or MSSQL Docker container)
+- PostgreSQL 16+ (or PostgreSQL Docker container)
 - 50GB+ storage for production data
 - Regular backup schedule
 
@@ -632,7 +636,7 @@ npm run preview  # Preview production build
 - 🔒 **[MEDIUM]** Centralized database connection pooling
 
 **Code Improvements:**
-- ♻️ All routes now use single `poolPromise` from `db.js`
+- ♻️ All routes now use single `pool` from `db.js`
 - ♻️ Removed 47 lines of dead code (`updateBackendInfo` function)
 - ♻️ Added input validation with regex patterns
 - ♻️ Implemented pattern blacklist for SQL injection
@@ -865,7 +869,7 @@ SOFTWARE.
 ## 🙏 Acknowledgments
 
 - **Development:** DaemonAlex
-- **Built with:** Node.js, Express, MSSQL, Docker, Nginx
+- **Built with:** Node.js, Express, PostgreSQL, Docker, Nginx
 - **Infrastructure:** Docker, Nginx, Vite
 
 ---
