@@ -1,5 +1,5 @@
 const express = require('express');
-const { sql, poolPromise } = require('../db');
+const { pool } = require('../db');
 const logger = require('../utils/logger');
 const { auditLog } = require('../middleware/audit');
 const router = express.Router();
@@ -8,8 +8,7 @@ const router = express.Router();
 router.post('/fix-active-projects', auditLog('Admin: fix active projects', 'admin', 'warning'), async (req, res) => {
   try {
     logger.info('🔧 Fixing active projects with realistic data...');
-    const pool = await poolPromise;
-    
+
     // Wintrust data
     const wintrustData = {
       'Wintrust Barrington Branch - Drive-Thru Modernization': {
@@ -19,7 +18,7 @@ router.post('/fix-active-projects', auditLog('Admin: fix active projects', 'admi
       }
       // Add other projects as needed
     };
-    
+
     // Task templates by phase
     const taskTemplates = {
       1: [
@@ -48,22 +47,22 @@ router.post('/fix-active-projects', auditLog('Admin: fix active projects', 'admi
         { name: 'Project Closeout Documentation', requiresFieldOps: false }
       ]
     };
-    
+
     const technicians = ['Mike Rodriguez', 'Sarah Chen', 'David Park', 'Tom Wilson', 'Lisa Martinez'];
-    
+
     // Generate realistic tasks
     function generateRealisticTasks() {
       const tasks = [];
       const currentDate = new Date();
       const projectPhase = Math.floor(Math.random() * 2) + 2; // Phase 2 or 3
-      
+
       for (let phase = 1; phase <= 4; phase++) {
         const phaseTemplates = taskTemplates[phase];
-        
+
         phaseTemplates.forEach((template, taskIndex) => {
           const taskId = `task_${phase}_${taskIndex}_${Date.now()}`;
           let status, fieldOps = {}, notes = [];
-          
+
           if (phase < projectPhase) {
             status = Math.random() < 0.9 ? 'completed' : 'in-progress';
           } else if (phase === projectPhase) {
@@ -75,12 +74,12 @@ router.post('/fix-active-projects', auditLog('Admin: fix active projects', 'admi
           } else {
             status = Math.random() < 0.8 ? 'pending' : 'scheduled';
           }
-          
+
           if (template.requiresFieldOps && (status === 'scheduled' || status === 'in-progress')) {
             const daysOut = Math.floor(Math.random() * 14) + 1;
             const schedDate = new Date(currentDate);
             schedDate.setDate(schedDate.getDate() + daysOut);
-            
+
             fieldOps = {
               scheduledDate: schedDate.toISOString().split('T')[0],
               scheduledTime: ['08:00', '09:30', '11:00', '13:30', '15:00'][Math.floor(Math.random() * 5)],
@@ -90,7 +89,7 @@ router.post('/fix-active-projects', auditLog('Admin: fix active projects', 'admi
               status: 'scheduled'
             };
           }
-          
+
           if (status === 'in-progress') {
             notes.push({
               id: `note_${Date.now()}_${taskIndex}`,
@@ -100,7 +99,7 @@ router.post('/fix-active-projects', auditLog('Admin: fix active projects', 'admi
               isInternal: Math.random() < 0.3
             });
           }
-          
+
           tasks.push({
             id: taskId,
             name: template.name,
@@ -117,59 +116,58 @@ router.post('/fix-active-projects', auditLog('Admin: fix active projects', 'admi
           });
         });
       }
-      
+
       return tasks;
     }
-    
+
     // Get all active projects
-    const activeProjects = await pool.request()
-      .query("SELECT id, name, budget FROM Projects WHERE status = 'active'");
-    
+    const activeProjects = await pool.query("SELECT id, name, budget FROM Projects WHERE status = 'active'");
+
     let updatedCount = 0;
-    
-    for (const project of activeProjects.recordset) {
+
+    for (const project of activeProjects.rows) {
       logger.info(`Updating: ${project.name}`);
-      
+
       const newTasks = generateRealisticTasks();
       const progress = Math.round((newTasks.filter(t => t.status === 'completed').length / newTasks.length) * 100);
       const projectData = wintrustData[project.name];
-      
-      await pool.request()
-        .input('id', sql.NVarChar, project.id)
-        .input('tasks', sql.NVarChar, JSON.stringify(newTasks))
-        .input('progress', sql.Decimal(5,2), progress)
-        .input('requestorInfo', sql.NVarChar, projectData?.requestorInfo || 'N/A')
-        .input('businessLine', sql.NVarChar, projectData?.businessLine || 'N/A')
-        .input('siteLocation', sql.NVarChar, projectData?.siteLocation || 'N/A')
-        .input('estimatedBudget', sql.Decimal(12,2), project.budget || 0)
-        .query(`
-          UPDATE Projects 
-          SET tasks = @tasks, 
-              progress = @progress,
-              requestorInfo = @requestorInfo,
-              businessLine = @businessLine,
-              siteLocation = @siteLocation,
-              estimatedBudget = @estimatedBudget,
-              updated_at = GETDATE()
-          WHERE id = @id
-        `);
-      
+
+      await pool.query(`
+        UPDATE Projects
+        SET tasks = $1,
+            progress = $2,
+            requestorInfo = $3,
+            businessLine = $4,
+            siteLocation = $5,
+            estimatedBudget = $6,
+            updated_at = NOW()
+        WHERE id = $7
+      `, [
+        JSON.stringify(newTasks),
+        progress,
+        projectData?.requestorInfo || 'N/A',
+        projectData?.businessLine || 'N/A',
+        projectData?.siteLocation || 'N/A',
+        project.budget || 0,
+        project.id
+      ]);
+
       updatedCount++;
     }
-    
+
     // Connection pool kept open for reuse
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: `Updated ${updatedCount} active projects with realistic task data`,
-      updatedCount 
+      updatedCount
     });
-    
+
   } catch (error) {
     logger.error('Error fixing active projects:', error);
-    res.status(500).json({ 
-      error: 'Failed to fix active projects', 
-      details: error.message 
+    res.status(500).json({
+      error: 'Failed to fix active projects',
+      details: error.message
     });
   }
 });
@@ -178,11 +176,10 @@ router.post('/fix-active-projects', auditLog('Admin: fix active projects', 'admi
 router.post('/load-full-wintrust-data', auditLog('Admin: load Wintrust data', 'admin', 'warning'), async (req, res) => {
   try {
     logger.info('🏦 Loading comprehensive Wintrust dataset...');
-    const pool = await poolPromise;
-    
+
     // Clear existing projects
-    await pool.request().query('DELETE FROM Projects');
-    
+    await pool.query('DELETE FROM Projects');
+
     // Comprehensive Wintrust Bank Projects
     const projects = [
       // ACTIVE PROJECTS
@@ -325,44 +322,33 @@ router.post('/load-full-wintrust-data', auditLog('Admin: load Wintrust data', 'a
         description: 'Modern lobby design with digital displays, improved lighting, and background music system.'
       }
     ];
-    
+
     let insertedCount = 0;
     for (const project of projects) {
-      await pool.request()
-        .input('id', sql.NVarChar, project.id)
-        .input('name', sql.NVarChar, project.name)
-        .input('client', sql.NVarChar, project.client)
-        .input('type', sql.NVarChar, project.type)
-        .input('status', sql.NVarChar, project.status)
-        .input('budget', sql.Decimal(12,2), project.budget)
-        .input('actualBudget', sql.Decimal(12,2), project.actualBudget)
-        .input('estimatedBudget', sql.Decimal(12,2), project.estimatedBudget)
-        .input('startDate', sql.DateTime2, new Date(project.startDate))
-        .input('endDate', sql.DateTime2, new Date(project.endDate))
-        .input('progress', sql.Decimal(5,2), project.progress)
-        .input('requestorInfo', sql.NVarChar, project.requestorInfo)
-        .input('businessLine', sql.NVarChar, project.businessLine)
-        .input('siteLocation', sql.NVarChar, project.siteLocation)
-        .input('description', sql.NVarChar, project.description)
-        .input('tasks', sql.NVarChar, '[]')
-        .query(`
-          INSERT INTO Projects (
-            id, name, client, type, status, budget, actualBudget, estimatedBudget,
-            startDate, endDate, progress, requestorInfo, businessLine, siteLocation,
-            description, tasks
-          ) VALUES (
-            @id, @name, @client, @type, @status, @budget, @actualBudget, @estimatedBudget,
-            @startDate, @endDate, @progress, @requestorInfo, @businessLine, @siteLocation,
-            @description, @tasks
-          )
-        `);
-      
+      await pool.query(`
+        INSERT INTO Projects (
+          id, name, client, type, status, budget, actualBudget, estimatedBudget,
+          startDate, endDate, progress, requestorInfo, businessLine, siteLocation,
+          description, tasks
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8,
+          $9, $10, $11, $12, $13, $14,
+          $15, $16
+        )
+      `, [
+        project.id, project.name, project.client, project.type, project.status,
+        project.budget, project.actualBudget, project.estimatedBudget,
+        new Date(project.startDate), new Date(project.endDate),
+        project.progress, project.requestorInfo, project.businessLine, project.siteLocation,
+        project.description, '[]'
+      ]);
+
       insertedCount++;
       logger.info(`✅ Loaded: ${project.name}`);
     }
-    
+
     // Connection pool kept open for reuse
-    
+
     res.json({
       success: true,
       message: `Successfully loaded ${insertedCount} Wintrust projects`,
@@ -373,7 +359,7 @@ router.post('/load-full-wintrust-data', auditLog('Admin: load Wintrust data', 'a
         scheduled: projects.filter(p => p.status === 'scheduled').length
       }
     });
-    
+
   } catch (error) {
     logger.error('Error loading Wintrust data:', error);
     res.status(500).json({ error: 'Failed to load Wintrust data', details: error.message });
@@ -382,30 +368,18 @@ router.post('/load-full-wintrust-data', auditLog('Admin: load Wintrust data', 'a
 
 // Add time tracking columns to database
 router.post('/add-time-tracking', async (req, res) => {
-  let pool;
   try {
-    pool = await poolPromise;
-    
-    // Check if columns already exist
-    const checkColumns = await pool.request().query(`
-      SELECT COUNT(*) as count 
-      FROM INFORMATION_SCHEMA.COLUMNS 
-      WHERE TABLE_NAME = 'Projects' 
-      AND COLUMN_NAME IN ('estimatedHours', 'actualHours', 'timeEntries')
+    // Add time tracking columns using ADD COLUMN IF NOT EXISTS
+    await pool.query(`
+      ALTER TABLE Projects ADD COLUMN IF NOT EXISTS estimatedHours NUMERIC(10,2)
     `);
-    
-    if (checkColumns.recordset[0].count < 3) {
-      // Add time tracking columns
-      await pool.request().query(`
-        IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Projects' AND COLUMN_NAME = 'estimatedHours')
-          ALTER TABLE Projects ADD estimatedHours DECIMAL(10,2);
-        IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Projects' AND COLUMN_NAME = 'actualHours')
-          ALTER TABLE Projects ADD actualHours DECIMAL(10,2);
-        IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Projects' AND COLUMN_NAME = 'timeEntries')
-          ALTER TABLE Projects ADD timeEntries NVARCHAR(MAX);
-      `);
-    }
-    
+    await pool.query(`
+      ALTER TABLE Projects ADD COLUMN IF NOT EXISTS actualHours NUMERIC(10,2)
+    `);
+    await pool.query(`
+      ALTER TABLE Projects ADD COLUMN IF NOT EXISTS timeEntries TEXT
+    `);
+
     res.json({ message: 'Time tracking columns added successfully' });
   } catch (error) {
     logger.error('Error adding time tracking columns:', error);
@@ -415,18 +389,15 @@ router.post('/add-time-tracking', async (req, res) => {
 
 // Update projects with time tracking data
 router.post('/update-time-tracking', async (req, res) => {
-  let pool;
   try {
-    pool = await poolPromise;
-    
     // Get all projects
-    const projects = await pool.request().query('SELECT * FROM Projects');
-    
-    for (const project of projects.recordset) {
-      let tasks = project.tasks ? JSON.parse(project.tasks) : [];
+    const projects = await pool.query('SELECT * FROM Projects');
+
+    for (const project of projects.rows) {
+      let tasks = project.tasks ? (typeof project.tasks === 'string' ? JSON.parse(project.tasks) : project.tasks) : [];
       let totalEstimatedHours = 0;
       let totalActualHours = 0;
-      
+
       // Add time tracking to tasks
       tasks = tasks.map(task => {
         // Add estimated hours based on task type
@@ -456,7 +427,7 @@ router.post('/update-time-tracking', async (req, res) => {
               task.estimatedHours = 4;
           }
         }
-        
+
         // Add actual hours based on status
         if (!task.actualHours) {
           if (task.status === 'completed') {
@@ -467,13 +438,13 @@ router.post('/update-time-tracking', async (req, res) => {
             task.actualHours = 0;
           }
         }
-        
+
         totalEstimatedHours += task.estimatedHours || 0;
         totalActualHours += task.actualHours || 0;
-        
+
         return task;
       });
-      
+
       // Generate sample time entries
       const timeEntries = [];
       if (project.status === 'active' || project.status === 'completed') {
@@ -490,25 +461,25 @@ router.post('/update-time-tracking', async (req, res) => {
           });
         }
       }
-      
+
       // Update project with time tracking data
-      await pool.request()
-        .input('id', sql.NVarChar, project.id)
-        .input('tasks', sql.NVarChar, JSON.stringify(tasks))
-        .input('estimatedHours', sql.Decimal(10,2), Math.round(totalEstimatedHours * 100) / 100)
-        .input('actualHours', sql.Decimal(10,2), Math.round(totalActualHours * 100) / 100)
-        .input('timeEntries', sql.NVarChar, JSON.stringify(timeEntries))
-        .query(`
-          UPDATE Projects 
-          SET tasks = @tasks,
-              estimatedHours = @estimatedHours,
-              actualHours = @actualHours,
-              timeEntries = @timeEntries
-          WHERE id = @id
-        `);
+      await pool.query(`
+        UPDATE Projects
+        SET tasks = $1,
+            estimatedHours = $2,
+            actualHours = $3,
+            timeEntries = $4
+        WHERE id = $5
+      `, [
+        JSON.stringify(tasks),
+        Math.round(totalEstimatedHours * 100) / 100,
+        Math.round(totalActualHours * 100) / 100,
+        JSON.stringify(timeEntries),
+        project.id
+      ]);
     }
-    
-    res.json({ message: 'Time tracking data updated successfully', projectsUpdated: projects.recordset.length });
+
+    res.json({ message: 'Time tracking data updated successfully', projectsUpdated: projects.rows.length });
   } catch (error) {
     logger.error('Error updating time tracking:', error);
     res.status(500).json({ error: 'Failed to update time tracking', details: error.message });
@@ -519,29 +490,22 @@ router.post('/update-time-tracking', async (req, res) => {
 router.post('/add-rag-status', async (req, res) => {
   try {
     logger.info('🚦 Adding RAG status calculations...');
-    const pool = await poolPromise;
-    
+
     // Add RAG status columns if they don't exist
     try {
-      await pool.request().query(`
-        IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Projects' AND COLUMN_NAME = 'ragStatus')
-        BEGIN
-          ALTER TABLE Projects ADD ragStatus NVARCHAR(10);
-        END
+      await pool.query(`
+        ALTER TABLE Projects ADD COLUMN IF NOT EXISTS ragStatus VARCHAR(10)
       `);
-      
-      await pool.request().query(`
-        IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Projects' AND COLUMN_NAME = 'ragReason')
-        BEGIN
-          ALTER TABLE Projects ADD ragReason NVARCHAR(255);
-        END
+
+      await pool.query(`
+        ALTER TABLE Projects ADD COLUMN IF NOT EXISTS ragReason VARCHAR(255)
       `);
-      
+
       logger.info('✅ RAG status columns added');
     } catch (columnError) {
       logger.info('RAG columns may already exist, continuing...');
     }
-    
+
     // RAG Status Calculation Logic
     function calculateProjectRAG(project) {
       const now = new Date();
@@ -550,10 +514,10 @@ router.post('/add-rag-status', async (req, res) => {
       const projectDuration = endDate - startDate;
       const elapsed = now - startDate;
       const timeProgress = Math.max(0, Math.min(100, (elapsed / projectDuration) * 100));
-      
-      const tasks = JSON.parse(project.tasks || '[]');
+
+      const tasks = typeof project.tasks === 'string' ? JSON.parse(project.tasks || '[]') : (project.tasks || []);
       const progress = project.progress || 0;
-      
+
       // Calculate task-level issues
       const overdueTasks = tasks.filter(task => {
         if (task.dueDate && task.status !== 'completed') {
@@ -561,22 +525,22 @@ router.post('/add-rag-status', async (req, res) => {
         }
         return false;
       }).length;
-      
-      const blockedTasks = tasks.filter(task => 
-        task.status === 'pending' && (task.notesThread || []).some(note => 
-          note.content.toLowerCase().includes('blocked') || 
+
+      const blockedTasks = tasks.filter(task =>
+        task.status === 'pending' && (task.notesThread || []).some(note =>
+          note.content.toLowerCase().includes('blocked') ||
           note.content.toLowerCase().includes('waiting')
         )
       ).length;
-      
+
       // Calculate budget variance
-      const budgetVariance = project.actualBudget > 0 ? 
+      const budgetVariance = project.actualBudget > 0 ?
         ((project.actualBudget - project.budget) / project.budget) * 100 : 0;
-      
+
       // RAG Logic
       let ragStatus = 'GREEN';
       let ragReason = 'Project on track';
-      
+
       // RED conditions (critical issues)
       if (project.status === 'active' && endDate < now) {
         ragStatus = 'RED';
@@ -608,15 +572,15 @@ router.post('/add-rag-status', async (req, res) => {
         ragStatus = 'AMBER';
         ragReason = 'Slightly behind schedule';
       }
-      
+
       return { ragStatus, ragReason };
     }
-    
+
     function calculateTaskRAG(task) {
       const now = new Date();
       let ragStatus = 'GREEN';
       let ragReason = 'Task on track';
-      
+
       // Task-specific RAG logic
       if (task.status === 'completed') {
         ragStatus = 'GREEN';
@@ -624,8 +588,8 @@ router.post('/add-rag-status', async (req, res) => {
       } else if (task.dueDate && new Date(task.dueDate) < now) {
         ragStatus = 'RED';
         ragReason = 'Task overdue';
-      } else if (task.status === 'pending' && (task.notesThread || []).some(note => 
-        note.content.toLowerCase().includes('blocked') || 
+      } else if (task.status === 'pending' && (task.notesThread || []).some(note =>
+        note.content.toLowerCase().includes('blocked') ||
         note.content.toLowerCase().includes('issue')
       )) {
         ragStatus = 'RED';
@@ -633,7 +597,7 @@ router.post('/add-rag-status', async (req, res) => {
       } else if (task.dueDate) {
         const dueDate = new Date(task.dueDate);
         const daysToDeadline = (dueDate - now) / (1000 * 60 * 60 * 24);
-        
+
         if (daysToDeadline <= 1 && task.status !== 'completed') {
           ragStatus = 'AMBER';
           ragReason = 'Due soon';
@@ -642,48 +606,43 @@ router.post('/add-rag-status', async (req, res) => {
           ragReason = 'Not started, due soon';
         }
       }
-      
+
       return { ragStatus, ragReason };
     }
-    
+
     // Get all projects and update RAG status
-    const projects = await pool.request().query('SELECT * FROM Projects');
+    const projects = await pool.query('SELECT * FROM Projects');
     let updatedCount = 0;
-    
-    for (const project of projects.recordset) {
+
+    for (const project of projects.rows) {
       const rag = calculateProjectRAG(project);
-      
+
       // Update tasks with RAG status
-      const tasks = JSON.parse(project.tasks || '[]');
+      const tasks = typeof project.tasks === 'string' ? JSON.parse(project.tasks || '[]') : (project.tasks || []);
       const updatedTasks = tasks.map(task => ({
         ...task,
         ...calculateTaskRAG(task)
       }));
-      
+
       // Update project with RAG status
-      await pool.request()
-        .input('id', sql.NVarChar, project.id)
-        .input('ragStatus', sql.NVarChar, rag.ragStatus)
-        .input('ragReason', sql.NVarChar, rag.ragReason)
-        .input('tasks', sql.NVarChar, JSON.stringify(updatedTasks))
-        .query(`
-          UPDATE Projects 
-          SET ragStatus = @ragStatus, ragReason = @ragReason, tasks = @tasks, updated_at = GETDATE()
-          WHERE id = @id
-        `);
-      
+      await pool.query(`
+        UPDATE Projects
+        SET ragStatus = $1, ragReason = $2, tasks = $3, updated_at = NOW()
+        WHERE id = $4
+      `, [rag.ragStatus, rag.ragReason, JSON.stringify(updatedTasks), project.id]);
+
       updatedCount++;
       logger.info(`✅ ${project.name}: ${rag.ragStatus} - ${rag.ragReason}`);
     }
-    
+
     // Connection pool kept open for reuse
-    
+
     res.json({
       success: true,
       message: `Updated RAG status for ${updatedCount} projects`,
       updatedCount
     });
-    
+
   } catch (error) {
     logger.error('Error adding RAG status:', error);
     res.status(500).json({ error: 'Failed to add RAG status', details: error.message });
@@ -692,22 +651,19 @@ router.post('/add-rag-status', async (req, res) => {
 
 // Reload clean project data
 router.post('/reload-projects', async (req, res) => {
-  let pool;
   try {
-    pool = await poolPromise;
-    
     // Get only legitimate project records
-    const result = await pool.request().query(`
-      SELECT * FROM Projects 
-      WHERE id LIKE 'WTB_%' 
+    const result = await pool.query(`
+      SELECT * FROM Projects
+      WHERE id LIKE 'WTB_%'
       ORDER BY created_at DESC
     `);
-    
-    const projects = result.recordset.map(project => ({
+
+    const projects = result.rows.map(project => ({
       ...project,
-      tasks: project.tasks ? JSON.parse(project.tasks) : []
+      tasks: project.tasks ? (typeof project.tasks === 'string' ? JSON.parse(project.tasks) : project.tasks) : []
     }));
-    
+
     res.json({ projects });
   } catch (error) {
     logger.error('Error reloading projects:', error);
@@ -717,31 +673,28 @@ router.post('/reload-projects', async (req, res) => {
 
 // Clean up corrupted database records
 router.post('/cleanup-database', auditLog('Admin: cleanup database', 'admin', 'critical'), async (req, res) => {
-  let pool;
   try {
-    pool = await poolPromise;
-    
     // First, let's see what we have
-    const allRecords = await pool.request().query('SELECT TOP 20 id, name FROM Projects ORDER BY created_at DESC');
-    logger.info('Sample records:', allRecords.recordset);
-    
+    const allRecords = await pool.query('SELECT id, name FROM Projects ORDER BY created_at DESC LIMIT 20');
+    logger.info('Sample records:', allRecords.rows);
+
     // Delete all records that don't have WTB_ IDs (these are corrupted task/note records)
-    const result = await pool.request().query(`
-      DELETE FROM Projects 
+    const result = await pool.query(`
+      DELETE FROM Projects
       WHERE id NOT LIKE 'WTB_%'
     `);
-    
-    logger.info(`Deleted ${result.rowsAffected[0]} corrupted records`);
-    
+
+    logger.info(`Deleted ${result.rowCount} corrupted records`);
+
     // Count remaining projects
-    const countResult = await pool.request().query('SELECT COUNT(*) as count FROM Projects');
-    const projectCount = countResult.recordset[0].count;
-    
-    res.json({ 
-      message: 'Database cleanup completed successfully', 
-      deletedRecords: result.rowsAffected[0],
+    const countResult = await pool.query('SELECT COUNT(*) as count FROM Projects');
+    const projectCount = parseInt(countResult.rows[0].count);
+
+    res.json({
+      message: 'Database cleanup completed successfully',
+      deletedRecords: result.rowCount,
       remainingProjects: projectCount,
-      sampleRecords: allRecords.recordset
+      sampleRecords: allRecords.rows
     });
   } catch (error) {
     logger.error('Error cleaning up database:', error);
@@ -753,27 +706,25 @@ router.post('/cleanup-database', auditLog('Admin: cleanup database', 'admin', 'c
 router.post('/cleanup-users', auditLog('Admin: cleanup users', 'admin', 'critical'), async (req, res) => {
   try {
     logger.info('🗑️ Cleaning up unwanted user accounts...');
-    const pool = await poolPromise;
 
     // Get current users to show what we're deleting
-    const currentUsers = await pool.request().query('SELECT id, name, email, role FROM Users');
-    logger.info('Current users:', currentUsers.recordset);
+    const currentUsers = await pool.query('SELECT id, name, email, role FROM Users');
+    logger.info('Current users:', currentUsers.rows);
 
     // Delete all users except the superadmin account we just created (admin@apex.local)
-    const deleteResult = await pool.request()
-      .query(`DELETE FROM Users WHERE email != 'admin@apex.local'`);
+    const deleteResult = await pool.query(`DELETE FROM Users WHERE email != 'admin@apex.local'`);
 
-    logger.info(`🗑️ Deleted ${deleteResult.rowsAffected[0]} unwanted accounts`);
+    logger.info(`🗑️ Deleted ${deleteResult.rowCount} unwanted accounts`);
 
     // Get remaining users
-    const remainingUsers = await pool.request().query('SELECT id, name, email, role FROM Users');
+    const remainingUsers = await pool.query('SELECT id, name, email, role FROM Users');
 
     // Connection pool kept open for reuse
 
     res.json({
       message: 'User cleanup completed',
-      deletedCount: deleteResult.rowsAffected[0],
-      remainingUsers: remainingUsers.recordset
+      deletedCount: deleteResult.rowCount,
+      remainingUsers: remainingUsers.rows
     });
 
   } catch (error) {

@@ -1,5 +1,5 @@
 const express = require('express');
-const { sql, poolPromise } = require('../db');
+const { pool } = require('../db');
 const logger = require('../utils/logger');
 const { validate, body } = require('../middleware/validate');
 const router = express.Router();
@@ -7,49 +7,41 @@ const router = express.Router();
 // GET /api/room-status - Get all rooms with latest check status
 router.get('/', async (req, res) => {
   try {
-    const pool = await poolPromise;
-
     // Create Rooms table (permanent room list)
-    await pool.request().query(`
-      IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Rooms' AND xtype='U')
-      BEGIN
-        CREATE TABLE Rooms (
-          id INT IDENTITY(1,1) PRIMARY KEY,
-          room_id NVARCHAR(100) UNIQUE NOT NULL,
-          name NVARCHAR(255) NOT NULL,
-          schedule_day INT NOT NULL,
-          schedule_day_name NVARCHAR(20) NOT NULL,
-          deleted_at DATETIME2,
-          created_at DATETIME2 DEFAULT GETDATE(),
-          updated_at DATETIME2 DEFAULT GETDATE()
-        );
-      END
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS Rooms (
+        id SERIAL PRIMARY KEY,
+        room_id VARCHAR(100) UNIQUE NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        schedule_day INT NOT NULL,
+        schedule_day_name VARCHAR(20) NOT NULL,
+        deleted_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
     `);
 
     // Create RoomCheckHistory table (audit trail of all checks)
-    await pool.request().query(`
-      IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='RoomCheckHistory' AND xtype='U')
-      BEGIN
-        CREATE TABLE RoomCheckHistory (
-          id INT IDENTITY(1,1) PRIMARY KEY,
-          room_id NVARCHAR(100) NOT NULL,
-          checked_by NVARCHAR(255),
-          rag_status NVARCHAR(20) NOT NULL,
-          limited_functionality NVARCHAR(MAX),
-          non_functional_reason NVARCHAR(MAX),
-          check_1_video BIT DEFAULT 0,
-          check_2_display BIT DEFAULT 0,
-          check_3_audio BIT DEFAULT 0,
-          check_4_camera BIT DEFAULT 0,
-          check_5_network BIT DEFAULT 0,
-          notes NVARCHAR(MAX),
-          checked_at DATETIME2 DEFAULT GETDATE()
-        );
-      END
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS RoomCheckHistory (
+        id SERIAL PRIMARY KEY,
+        room_id VARCHAR(100) NOT NULL,
+        checked_by VARCHAR(255),
+        rag_status VARCHAR(20) NOT NULL,
+        limited_functionality TEXT,
+        non_functional_reason TEXT,
+        check_1_video BOOLEAN DEFAULT FALSE,
+        check_2_display BOOLEAN DEFAULT FALSE,
+        check_3_audio BOOLEAN DEFAULT FALSE,
+        check_4_camera BOOLEAN DEFAULT FALSE,
+        check_5_network BOOLEAN DEFAULT FALSE,
+        notes TEXT,
+        checked_at TIMESTAMPTZ DEFAULT NOW()
+      )
     `);
 
     // Get all non-deleted rooms with their latest check
-    const result = await pool.request().query(`
+    const result = await pool.query(`
       SELECT
         r.*,
         h.rag_status,
@@ -74,7 +66,7 @@ router.get('/', async (req, res) => {
       ORDER BY r.schedule_day, r.name
     `);
 
-    const rooms = result.recordset.map(row => ({
+    const rooms = result.rows.map(row => ({
       id: row.room_id,
       name: row.name,
       scheduleDay: row.schedule_day,
@@ -116,55 +108,42 @@ router.post('/',
   try {
     const { room, checkData } = req.body;
 
-    const pool = await poolPromise;
-
     if (checkData) {
       // This is a check submission for an existing room
-      await pool.request()
-        .input('room_id', sql.NVarChar, checkData.roomId)
-        .input('checked_by', sql.NVarChar, checkData.checkedBy || 'System')
-        .input('rag_status', sql.NVarChar, checkData.ragStatus)
-        .input('limited_functionality', sql.NVarChar, checkData.limitedFunctionality || '')
-        .input('non_functional_reason', sql.NVarChar, checkData.nonFunctionalReason || '')
-        .input('check_1_video', sql.Bit, checkData.checks[0] || false)
-        .input('check_2_display', sql.Bit, checkData.checks[1] || false)
-        .input('check_3_audio', sql.Bit, checkData.checks[2] || false)
-        .input('check_4_camera', sql.Bit, checkData.checks[3] || false)
-        .input('check_5_network', sql.Bit, checkData.checks[4] || false)
-        .input('notes', sql.NVarChar, checkData.notes || '')
-        .query(`
-          INSERT INTO RoomCheckHistory
-            (room_id, checked_by, rag_status, limited_functionality, non_functional_reason,
-             check_1_video, check_2_display, check_3_audio, check_4_camera, check_5_network, notes)
-          VALUES
-            (@room_id, @checked_by, @rag_status, @limited_functionality, @non_functional_reason,
-             @check_1_video, @check_2_display, @check_3_audio, @check_4_camera, @check_5_network, @notes)
-        `);
+      await pool.query(`
+        INSERT INTO RoomCheckHistory
+          (room_id, checked_by, rag_status, limited_functionality, non_functional_reason,
+           check_1_video, check_2_display, check_3_audio, check_4_camera, check_5_network, notes)
+        VALUES
+          ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      `, [
+        checkData.roomId,
+        checkData.checkedBy || 'System',
+        checkData.ragStatus,
+        checkData.limitedFunctionality || '',
+        checkData.nonFunctionalReason || '',
+        checkData.checks[0] || false,
+        checkData.checks[1] || false,
+        checkData.checks[2] || false,
+        checkData.checks[3] || false,
+        checkData.checks[4] || false,
+        checkData.notes || ''
+      ]);
 
       // Connection pool kept open for reuse
       return res.json({ success: true, message: 'Room check recorded successfully' });
 
     } else if (room) {
-      // This is creating a new room
-      await pool.request()
-        .input('room_id', sql.NVarChar, room.id)
-        .input('name', sql.NVarChar, room.name)
-        .input('schedule_day', sql.Int, room.scheduleDay)
-        .input('schedule_day_name', sql.NVarChar, room.scheduleDayName || '')
-        .query(`
-          MERGE Rooms AS target
-          USING (SELECT @room_id AS room_id) AS source
-          ON target.room_id = source.room_id
-          WHEN MATCHED THEN
-            UPDATE SET
-              name = @name,
-              schedule_day = @schedule_day,
-              schedule_day_name = @schedule_day_name,
-              updated_at = GETDATE()
-          WHEN NOT MATCHED THEN
-            INSERT (room_id, name, schedule_day, schedule_day_name)
-            VALUES (@room_id, @name, @schedule_day, @schedule_day_name);
-        `);
+      // This is creating a new room — use INSERT ... ON CONFLICT (upsert)
+      await pool.query(`
+        INSERT INTO Rooms (room_id, name, schedule_day, schedule_day_name)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (room_id) DO UPDATE SET
+          name = EXCLUDED.name,
+          schedule_day = EXCLUDED.schedule_day,
+          schedule_day_name = EXCLUDED.schedule_day_name,
+          updated_at = NOW()
+      `, [room.id, room.name, room.scheduleDay, room.scheduleDayName || '']);
 
       // Connection pool kept open for reuse
       return res.json({ success: true, message: 'Room created successfully' });
@@ -184,17 +163,14 @@ router.post('/',
 router.get('/:roomId/history', async (req, res) => {
   try {
     const { roomId } = req.params;
-    const pool = await poolPromise;
 
-    const result = await pool.request()
-      .input('room_id', sql.NVarChar, roomId)
-      .query(`
-        SELECT * FROM RoomCheckHistory
-        WHERE room_id = @room_id
-        ORDER BY checked_at DESC
-      `);
+    const result = await pool.query(`
+      SELECT * FROM RoomCheckHistory
+      WHERE room_id = $1
+      ORDER BY checked_at DESC
+    `, [roomId]);
 
-    const history = result.recordset.map(row => ({
+    const history = result.rows.map(row => ({
       id: row.id,
       checkedBy: row.checked_by,
       ragStatus: row.rag_status,
@@ -218,12 +194,9 @@ router.get('/:roomId/history', async (req, res) => {
 router.delete('/:roomId', async (req, res) => {
   try {
     const { roomId } = req.params;
-    const pool = await poolPromise;
 
     // Soft delete by setting deleted_at timestamp
-    await pool.request()
-      .input('room_id', sql.NVarChar, roomId)
-      .query('UPDATE Rooms SET deleted_at = GETDATE() WHERE room_id = @room_id');
+    await pool.query('UPDATE Rooms SET deleted_at = NOW() WHERE room_id = $1', [roomId]);
 
     // Connection pool kept open for reuse
     res.json({ success: true, message: 'Room deleted successfully (all check history preserved)' });
