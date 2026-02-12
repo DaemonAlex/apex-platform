@@ -1,5 +1,5 @@
 const express = require('express');
-const { sql, poolPromise } = require('../db');
+const { pool } = require('../db');
 const logger = require('../utils/logger');
 const { validate, body, query, isPositiveInt } = require('../middleware/validate');
 const router = express.Router();
@@ -30,25 +30,23 @@ router.post('/log',
       ipAddress = req.ip || '127.0.0.1'
     } = req.body;
 
-    const pool = await poolPromise;
-
     // Insert audit log entry
-    await pool.request()
-      .input('id', sql.NVarChar, `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`)
-      .input('timestamp', sql.DateTime, new Date())
-      .input('user', sql.NVarChar, user || 'System')
-      .input('action', sql.NVarChar, action)
-      .input('resource', sql.NVarChar, resource || '')
-      .input('details', sql.NVarChar, details || '')
-      .input('projectId', sql.NVarChar, projectId || null)
-      .input('taskId', sql.NVarChar, taskId || null)
-      .input('category', sql.NVarChar, category)
-      .input('severity', sql.NVarChar, severity)
-      .input('ipAddress', sql.NVarChar, ipAddress)
-      .query(`
-        INSERT INTO AuditLog (id, timestamp, [user], action, resource, details, projectId, taskId, category, severity, ipAddress, created_at)
-        VALUES (@id, @timestamp, @user, @action, @resource, @details, @projectId, @taskId, @category, @severity, @ipAddress, GETDATE())
-      `);
+    await pool.query(`
+      INSERT INTO AuditLog (id, timestamp, "user", action, resource, details, projectId, taskId, category, severity, ipAddress, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+    `, [
+      `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      new Date(),
+      user || 'System',
+      action,
+      resource || '',
+      details || '',
+      projectId || null,
+      taskId || null,
+      category,
+      severity,
+      ipAddress
+    ]);
 
     res.json({ message: 'Audit log entry created successfully' });
 
@@ -72,43 +70,39 @@ router.get('/log',
   try {
     const { limit = 100, offset = 0, projectId, category, severity } = req.query;
 
-    const pool = await poolPromise;
-
-    // Build WHERE clause for both queries
+    // Build WHERE clause and params dynamically
     let whereClause = ' WHERE 1=1';
-    const addInputs = (request) => {
-      if (projectId) {
-        request.input('projectId', sql.NVarChar, projectId);
-      }
-      if (category) {
-        request.input('category', sql.NVarChar, category);
-      }
-      if (severity) {
-        request.input('severity', sql.NVarChar, severity);
-      }
-      return request;
-    };
+    const params = [];
+    let paramIndex = 1;
 
-    if (projectId) whereClause += ' AND projectId = @projectId';
-    if (category) whereClause += ' AND category = @category';
-    if (severity) whereClause += ' AND severity = @severity';
+    if (projectId) {
+      whereClause += ` AND projectId = $${paramIndex++}`;
+      params.push(projectId);
+    }
+    if (category) {
+      whereClause += ` AND category = $${paramIndex++}`;
+      params.push(category);
+    }
+    if (severity) {
+      whereClause += ` AND severity = $${paramIndex++}`;
+      params.push(severity);
+    }
 
     // ASRB 5.1.5: Get total count for pagination
-    const countRequest = addInputs(pool.request());
-    const countResult = await countRequest.query(`SELECT COUNT(*) as total FROM AuditLog${whereClause}`);
-    const total = countResult.recordset[0].total;
+    const countResult = await pool.query(`SELECT COUNT(*) as total FROM AuditLog${whereClause}`, params);
+    const total = parseInt(countResult.rows[0].total);
 
     // ASRB 5.1.3: Parameterized offset/limit (fixes SQL injection risk)
-    const dataRequest = addInputs(pool.request());
-    dataRequest.input('offset', sql.Int, parseInt(offset) || 0);
-    dataRequest.input('limit', sql.Int, Math.min(parseInt(limit) || 100, 1000));
+    const limitVal = Math.min(parseInt(limit) || 100, 1000);
+    const offsetVal = parseInt(offset) || 0;
 
-    const result = await dataRequest.query(
-      `SELECT * FROM AuditLog${whereClause} ORDER BY timestamp DESC OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY`
+    const result = await pool.query(
+      `SELECT * FROM AuditLog${whereClause} ORDER BY timestamp DESC OFFSET $${paramIndex++} LIMIT $${paramIndex++}`,
+      [...params, offsetVal, limitVal]
     );
 
     res.json({
-      auditLog: result.recordset,
+      auditLog: result.rows,
       total
     });
 

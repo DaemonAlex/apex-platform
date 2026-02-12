@@ -1,4 +1,4 @@
-const sql = require('mssql');
+const { Pool } = require('pg');
 
 // Validate required environment variables
 const requiredEnvVars = ['DB_USERNAME', 'DB_PASSWORD', 'DB_HOST', 'DB_DATABASE'];
@@ -13,32 +13,22 @@ if (missingEnvVars.length > 0) {
 }
 
 // Database configuration - NO HARDCODED CREDENTIALS
-const dbConfig = {
+const pool = new Pool({
   user: process.env.DB_USERNAME,
   password: process.env.DB_PASSWORD,
-  server: process.env.DB_HOST,
-  port: parseInt(process.env.DB_PORT || '1433'),
+  host: process.env.DB_HOST,
+  port: parseInt(process.env.DB_PORT || '5432'),
   database: process.env.DB_DATABASE,
-  options: {
-    encrypt: false,
-    trustServerCertificate: true
-  }
-};
+});
 
-// Create connection pool
-const poolPromise = new sql.ConnectionPool(dbConfig)
-  .connect()
-  .then(pool => {
-    console.log('✅ Connected to SQL Server database');
-    return pool;
-  })
-  .catch(err => {
-    console.error('❌ Database connection failed:', err);
-    throw err;
-  });
+pool.on('connect', () => {
+  console.log('✅ Connected to PostgreSQL database');
+});
+
+pool.on('error', (err) => {
+  console.error('❌ Database connection error:', err);
+});
 
 module.exports = {
-  sql,
-  poolPromise,
-  dbConfig
+  pool,
 };
