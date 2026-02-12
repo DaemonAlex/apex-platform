@@ -1,11 +1,13 @@
 const express = require('express');
 const { sql, poolPromise } = require('../db');
+const logger = require('../utils/logger');
+const { auditLog } = require('../middleware/audit');
 const router = express.Router();
 
 // Fix active projects with realistic task data
-router.post('/fix-active-projects', async (req, res) => {
+router.post('/fix-active-projects', auditLog('Admin: fix active projects', 'admin', 'warning'), async (req, res) => {
   try {
-    console.log('🔧 Fixing active projects with realistic data...');
+    logger.info('🔧 Fixing active projects with realistic data...');
     const pool = await poolPromise;
     
     // Wintrust data
@@ -126,7 +128,7 @@ router.post('/fix-active-projects', async (req, res) => {
     let updatedCount = 0;
     
     for (const project of activeProjects.recordset) {
-      console.log(`Updating: ${project.name}`);
+      logger.info(`Updating: ${project.name}`);
       
       const newTasks = generateRealisticTasks();
       const progress = Math.round((newTasks.filter(t => t.status === 'completed').length / newTasks.length) * 100);
@@ -164,7 +166,7 @@ router.post('/fix-active-projects', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Error fixing active projects:', error);
+    logger.error('Error fixing active projects:', error);
     res.status(500).json({ 
       error: 'Failed to fix active projects', 
       details: error.message 
@@ -173,9 +175,9 @@ router.post('/fix-active-projects', async (req, res) => {
 });
 
 // Load comprehensive Wintrust dataset
-router.post('/load-full-wintrust-data', async (req, res) => {
+router.post('/load-full-wintrust-data', auditLog('Admin: load Wintrust data', 'admin', 'warning'), async (req, res) => {
   try {
-    console.log('🏦 Loading comprehensive Wintrust dataset...');
+    logger.info('🏦 Loading comprehensive Wintrust dataset...');
     const pool = await poolPromise;
     
     // Clear existing projects
@@ -356,7 +358,7 @@ router.post('/load-full-wintrust-data', async (req, res) => {
         `);
       
       insertedCount++;
-      console.log(`✅ Loaded: ${project.name}`);
+      logger.info(`✅ Loaded: ${project.name}`);
     }
     
     // Connection pool kept open for reuse
@@ -373,7 +375,7 @@ router.post('/load-full-wintrust-data', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Error loading Wintrust data:', error);
+    logger.error('Error loading Wintrust data:', error);
     res.status(500).json({ error: 'Failed to load Wintrust data', details: error.message });
   }
 });
@@ -406,7 +408,7 @@ router.post('/add-time-tracking', async (req, res) => {
     
     res.json({ message: 'Time tracking columns added successfully' });
   } catch (error) {
-    console.error('Error adding time tracking columns:', error);
+    logger.error('Error adding time tracking columns:', error);
     res.status(500).json({ error: 'Failed to add time tracking columns', details: error.message });
   }
 });
@@ -508,7 +510,7 @@ router.post('/update-time-tracking', async (req, res) => {
     
     res.json({ message: 'Time tracking data updated successfully', projectsUpdated: projects.recordset.length });
   } catch (error) {
-    console.error('Error updating time tracking:', error);
+    logger.error('Error updating time tracking:', error);
     res.status(500).json({ error: 'Failed to update time tracking', details: error.message });
   }
 });
@@ -516,7 +518,7 @@ router.post('/update-time-tracking', async (req, res) => {
 // Add RAG status columns and calculate RAG status for all projects
 router.post('/add-rag-status', async (req, res) => {
   try {
-    console.log('🚦 Adding RAG status calculations...');
+    logger.info('🚦 Adding RAG status calculations...');
     const pool = await poolPromise;
     
     // Add RAG status columns if they don't exist
@@ -535,9 +537,9 @@ router.post('/add-rag-status', async (req, res) => {
         END
       `);
       
-      console.log('✅ RAG status columns added');
+      logger.info('✅ RAG status columns added');
     } catch (columnError) {
-      console.log('RAG columns may already exist, continuing...');
+      logger.info('RAG columns may already exist, continuing...');
     }
     
     // RAG Status Calculation Logic
@@ -671,7 +673,7 @@ router.post('/add-rag-status', async (req, res) => {
         `);
       
       updatedCount++;
-      console.log(`✅ ${project.name}: ${rag.ragStatus} - ${rag.ragReason}`);
+      logger.info(`✅ ${project.name}: ${rag.ragStatus} - ${rag.ragReason}`);
     }
     
     // Connection pool kept open for reuse
@@ -683,7 +685,7 @@ router.post('/add-rag-status', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Error adding RAG status:', error);
+    logger.error('Error adding RAG status:', error);
     res.status(500).json({ error: 'Failed to add RAG status', details: error.message });
   }
 });
@@ -708,20 +710,20 @@ router.post('/reload-projects', async (req, res) => {
     
     res.json({ projects });
   } catch (error) {
-    console.error('Error reloading projects:', error);
+    logger.error('Error reloading projects:', error);
     res.status(500).json({ error: 'Failed to reload projects', details: error.message });
   }
 });
 
 // Clean up corrupted database records
-router.post('/cleanup-database', async (req, res) => {
+router.post('/cleanup-database', auditLog('Admin: cleanup database', 'admin', 'critical'), async (req, res) => {
   let pool;
   try {
     pool = await poolPromise;
     
     // First, let's see what we have
     const allRecords = await pool.request().query('SELECT TOP 20 id, name FROM Projects ORDER BY created_at DESC');
-    console.log('Sample records:', allRecords.recordset);
+    logger.info('Sample records:', allRecords.recordset);
     
     // Delete all records that don't have WTB_ IDs (these are corrupted task/note records)
     const result = await pool.request().query(`
@@ -729,7 +731,7 @@ router.post('/cleanup-database', async (req, res) => {
       WHERE id NOT LIKE 'WTB_%'
     `);
     
-    console.log(`Deleted ${result.rowsAffected[0]} corrupted records`);
+    logger.info(`Deleted ${result.rowsAffected[0]} corrupted records`);
     
     // Count remaining projects
     const countResult = await pool.request().query('SELECT COUNT(*) as count FROM Projects');
@@ -742,26 +744,26 @@ router.post('/cleanup-database', async (req, res) => {
       sampleRecords: allRecords.recordset
     });
   } catch (error) {
-    console.error('Error cleaning up database:', error);
+    logger.error('Error cleaning up database:', error);
     res.status(500).json({ error: 'Failed to cleanup database', details: error.message });
   }
 });
 
 // Clean up unwanted user accounts (keep only superadmin)
-router.post('/cleanup-users', async (req, res) => {
+router.post('/cleanup-users', auditLog('Admin: cleanup users', 'admin', 'critical'), async (req, res) => {
   try {
-    console.log('🗑️ Cleaning up unwanted user accounts...');
+    logger.info('🗑️ Cleaning up unwanted user accounts...');
     const pool = await poolPromise;
 
     // Get current users to show what we're deleting
     const currentUsers = await pool.request().query('SELECT id, name, email, role FROM Users');
-    console.log('Current users:', currentUsers.recordset);
+    logger.info('Current users:', currentUsers.recordset);
 
     // Delete all users except the superadmin account we just created (admin@apex.local)
     const deleteResult = await pool.request()
       .query(`DELETE FROM Users WHERE email != 'admin@apex.local'`);
 
-    console.log(`🗑️ Deleted ${deleteResult.rowsAffected[0]} unwanted accounts`);
+    logger.info(`🗑️ Deleted ${deleteResult.rowsAffected[0]} unwanted accounts`);
 
     // Get remaining users
     const remainingUsers = await pool.request().query('SELECT id, name, email, role FROM Users');
@@ -775,7 +777,7 @@ router.post('/cleanup-users', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error cleaning up users:', error);
+    logger.error('Error cleaning up users:', error);
     res.status(500).json({
       error: 'Failed to cleanup users',
       details: error.message

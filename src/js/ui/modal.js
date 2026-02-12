@@ -5,6 +5,8 @@
  * Phase 4: UI Modules
  */
 
+import { escapeHtml } from '../utils/sanitize.js';
+
 /**
  * Active modals stack
  */
@@ -139,10 +141,10 @@ export function createModal(options = {}) {
     // Get the body element
     getBody: () => modal.querySelector('.apex-modal-body'),
 
-    // Set body content
-    setContent: (html) => {
+    // Set body content - ASRB 5.1.1: default escapes content, raw=true for trusted HTML
+    setContent: (content, { raw = false } = {}) => {
       const body = modal.querySelector('.apex-modal-body');
-      if (body) body.innerHTML = html;
+      if (body) body.innerHTML = raw ? content : escapeHtml(content);
     },
 
     // Get form data if modal contains a form
@@ -295,16 +297,6 @@ function buildButtons(buttons) {
       >${escapeHtml(btn.label || btn.text || 'Button')}</button>
     `;
   }).join('');
-}
-
-/**
- * Escape HTML
- */
-function escapeHtml(str) {
-  if (!str) return '';
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
 }
 
 /**

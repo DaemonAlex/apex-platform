@@ -1,6 +1,38 @@
 const express = require('express');
 const { sql, poolPromise } = require('../db');
+const logger = require('../utils/logger');
+const { auditLog } = require('../middleware/audit');
+const { validate, body, param } = require('../middleware/validate');
 const router = express.Router();
+
+// Validation chains for projects
+const projectValidation = [
+  body('id').trim().notEmpty().withMessage('Project ID is required')
+    .matches(/^[a-zA-Z0-9_-]+$/).withMessage('Project ID must be alphanumeric (with underscores/hyphens)')
+    .isLength({ max: 50 }),
+  body('name').trim().notEmpty().withMessage('Project name is required')
+    .isLength({ min: 1, max: 255 }).withMessage('Name must be 1-255 characters'),
+  body('status').optional().isIn(['planning', 'active', 'in-progress', 'on-hold', 'completed', 'cancelled', 'scheduled']).withMessage('Invalid status'),
+  body('budget').optional().isFloat({ min: 0 }).withMessage('Budget must be >= 0'),
+  body('actualBudget').optional().isFloat({ min: 0 }).withMessage('Actual budget must be >= 0'),
+  body('estimatedBudget').optional().isFloat({ min: 0 }).withMessage('Estimated budget must be >= 0'),
+  body('startDate').optional({ values: 'null' }).isISO8601().withMessage('Start date must be valid ISO 8601'),
+  body('endDate').optional({ values: 'null' }).isISO8601().withMessage('End date must be valid ISO 8601'),
+  body('description').optional().isLength({ max: 5000 }).withMessage('Description max 5000 chars'),
+  body('progress').optional().isInt({ min: 0, max: 100 }).withMessage('Progress must be 0-100')
+];
+
+const projectUpdateValidation = [
+  body('name').optional().trim().isLength({ min: 1, max: 255 }).withMessage('Name must be 1-255 characters'),
+  body('status').optional().isIn(['planning', 'active', 'in-progress', 'on-hold', 'completed', 'cancelled', 'scheduled']).withMessage('Invalid status'),
+  body('budget').optional().isFloat({ min: 0 }).withMessage('Budget must be >= 0'),
+  body('actualBudget').optional().isFloat({ min: 0 }).withMessage('Actual budget must be >= 0'),
+  body('estimatedBudget').optional().isFloat({ min: 0 }).withMessage('Estimated budget must be >= 0'),
+  body('startDate').optional({ values: 'null' }).isISO8601().withMessage('Start date must be valid ISO 8601'),
+  body('endDate').optional({ values: 'null' }).isISO8601().withMessage('End date must be valid ISO 8601'),
+  body('description').optional().isLength({ max: 5000 }).withMessage('Description max 5000 chars'),
+  body('progress').optional().isInt({ min: 0, max: 100 }).withMessage('Progress must be 0-100')
+];
 
 // Helper function to find task recursively in project tasks (including subtasks)
 function findTaskInProject(tasks, taskId) {
@@ -91,13 +123,13 @@ async function initializeProjectsTable() {
 
     // SECURITY: Validate column name contains only safe characters (defense in depth)
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(columnName)) {
-      console.error(`❌ SECURITY: Invalid column name detected: ${columnName}`);
+      logger.error('SECURITY: Invalid column name detected', { columnName });
       continue;
     }
 
     // Validate full column definition doesn't contain suspicious patterns
     if (/;|--|\/\*|\*\/|xp_|sp_|exec|execute/i.test(column)) {
-      console.error(`❌ SECURITY: Suspicious pattern in column definition: ${column}`);
+      logger.error('SECURITY: Suspicious pattern in column definition', { column });
       continue;
     }
 
@@ -114,10 +146,10 @@ async function initializeProjectsTable() {
       if (checkResult.recordset[0].exists === 0) {
         // Column doesn't exist, add it (column definition is validated above)
         await pool.request().query(`ALTER TABLE Projects ADD ${column}`);
-        console.log(`✅ Added column: ${columnName}`);
+        logger.info('Added column to Projects', { columnName });
       }
     } catch (err) {
-      console.warn(`⚠️ Column migration warning for ${columnName}:`, err.message);
+      logger.warn('Column migration warning', { columnName, error: err.message });
     }
   }
 
@@ -129,18 +161,18 @@ router.get('/', async (req, res) => {
   let pool;
   try {
     await initializeProjectsTable();
-    
+
     pool = await poolPromise;
     const result = await pool.request().query('SELECT * FROM Projects WHERE id LIKE \'WTB_%\' ORDER BY created_at DESC');
-    
+
     const projects = result.recordset.map(project => ({
       ...project,
       tasks: project.tasks ? JSON.parse(project.tasks) : []
     }));
-    
+
     res.json({ projects });
   } catch (error) {
-    console.error('Get projects error:', error);
+    logger.error('Get projects error', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch projects', details: error.message });
   }
 });
@@ -163,7 +195,7 @@ router.get('/:id', async (req, res) => {
     res.json(project);
     // pool kept open
   } catch (error) {
-    console.error('Get project error:', error);
+    logger.error('Get project error', { error: error.message, projectId: req.params.id });
     res.status(500).json({ error: 'Failed to fetch project', details: error.message });
   }
 });
@@ -184,23 +216,22 @@ router.get('/:id/children', async (req, res) => {
     res.json({ projects });
     // pool kept open
   } catch (error) {
-    console.error('Get child projects error:', error);
+    logger.error('Get child projects error', { error: error.message, parentId: req.params.id });
     res.status(500).json({ error: 'Failed to fetch child projects', details: error.message });
   }
 });
 
 // Create project
-router.post('/', async (req, res) => {
+router.post('/',
+  validate(projectValidation),
+  auditLog('Project created', 'project', 'info'),
+  async (req, res) => {
   try {
     await initializeProjectsTable();
-    
+
     const { id, name, client, type, status, budget, actualBudget, startDate, endDate, description, tasks,
             requestorInfo, siteLocation, businessLine, progress, priority, requestDate, dueDate, estimatedBudget,
             costCenter, purchaseOrder, parent_project_id } = req.body;
-
-    if (!id || !name) {
-      return res.status(400).json({ error: 'Project ID and name are required' });
-    }
 
     const pool = await poolPromise;
 
@@ -236,7 +267,7 @@ router.post('/', async (req, res) => {
                 @requestorInfo, @siteLocation, @businessLine, @progress, @priority, @requestDate, @dueDate, @estimatedBudget,
                 @costCenter, @purchaseOrder, @parent_project_id)
       `);
-    
+
     const project = result.recordset[0];
     project.tasks = JSON.parse(project.tasks);
 
@@ -245,16 +276,20 @@ router.post('/', async (req, res) => {
       await updateParentProjectRollups(parent_project_id);
     }
 
+    logger.info('Project created', { projectId: id, name, userId: req.user?.email });
+
     res.status(201).json({ project });
     // pool kept open
   } catch (error) {
-    console.error('Create project error:', error);
+    logger.error('Create project error', { error: error.message });
     res.status(500).json({ error: 'Failed to create project', details: error.message });
   }
 });
 
 // Update project
-router.put('/:id', async (req, res) => {
+router.put('/:id',
+  validate(projectUpdateValidation),
+  async (req, res) => {
   try {
     const { name, client, type, status, budget, actualBudget, startDate, endDate, description, tasks,
             requestorInfo, siteLocation, businessLine, progress, priority, requestDate, dueDate,
@@ -314,13 +349,15 @@ router.put('/:id', async (req, res) => {
     res.json({ project });
     // pool kept open
   } catch (error) {
-    console.error('Update project error:', error);
+    logger.error('Update project error', { error: error.message, projectId: req.params.id });
     res.status(500).json({ error: 'Failed to update project', details: error.message });
   }
 });
 
 // Delete project
-router.delete('/:id', async (req, res) => {
+router.delete('/:id',
+  auditLog('Project deleted', 'project', 'warning'),
+  async (req, res) => {
   try {
     const pool = await poolPromise;
 
@@ -349,10 +386,12 @@ router.delete('/:id', async (req, res) => {
       await updateParentProjectRollups(parentProjectId);
     }
 
+    logger.info('Project deleted', { projectId: req.params.id, userId: req.user?.email });
+
     res.json({ message: 'Project deleted successfully' });
     // pool kept open
   } catch (error) {
-    console.error('Delete project error:', error);
+    logger.error('Delete project error', { error: error.message, projectId: req.params.id });
     res.status(500).json({ error: 'Failed to delete project', details: error.message });
   }
 });
@@ -363,22 +402,22 @@ router.post('/:projectId/time-entry', async (req, res) => {
   try {
     const { projectId } = req.params;
     const { taskId, employee, hours, date, description } = req.body;
-    
+
     pool = await poolPromise;
-    
+
     // Get current project
     const result = await pool.request()
       .input('id', sql.NVarChar, projectId)
       .query('SELECT * FROM Projects WHERE id = @id');
-    
+
     if (result.recordset.length === 0) {
       return res.status(404).json({ error: 'Project not found' });
     }
-    
+
     const project = result.recordset[0];
     let timeEntries = project.timeEntries ? JSON.parse(project.timeEntries) : [];
     let tasks = project.tasks ? JSON.parse(project.tasks) : [];
-    
+
     // Add new time entry
     const newEntry = {
       id: `TE_${Date.now()}`,
@@ -388,9 +427,9 @@ router.post('/:projectId/time-entry', async (req, res) => {
       date: date || new Date().toISOString(),
       description
     };
-    
+
     timeEntries.push(newEntry);
-    
+
     // Update task actual hours
     const taskIndex = tasks.findIndex(t => t.id === taskId);
     if (taskIndex !== -1) {
@@ -413,7 +452,7 @@ router.post('/:projectId/time-entry', async (req, res) => {
     const totalActualHours = tasks
       .filter(t => !t.parentTaskId) // Only root tasks
       .reduce((sum, task) => sum + (task.actualHours || 0), 0);
-    
+
     // Update project
     await pool.request()
       .input('id', sql.NVarChar, projectId)
@@ -436,7 +475,7 @@ router.post('/:projectId/time-entry', async (req, res) => {
 
     res.json({ message: 'Time entry added successfully', entry: newEntry });
   } catch (error) {
-    console.error('Add time entry error:', error);
+    logger.error('Add time entry error', { error: error.message, projectId: req.params.projectId });
     res.status(500).json({ error: 'Failed to add time entry', details: error.message });
   }
 });
@@ -446,18 +485,18 @@ router.put('/:projectId/tasks/:taskId', async (req, res) => {
   try {
     const { projectId, taskId } = req.params;
     const taskUpdate = req.body;
-    
+
     const pool = await poolPromise;
-    
+
     // Get current project
     const projectResult = await pool.request()
       .input('id', sql.NVarChar, projectId)
       .query('SELECT * FROM Projects WHERE id = @id');
-    
+
     if (projectResult.recordset.length === 0) {
       return res.status(404).json({ error: 'Project not found' });
     }
-    
+
     const project = projectResult.recordset[0];
     let tasks = project.tasks ? JSON.parse(project.tasks) : [];
 
@@ -469,7 +508,7 @@ router.put('/:projectId/tasks/:taskId', async (req, res) => {
 
     // Update the task with provided data
     Object.assign(found.task, taskUpdate, { updatedAt: new Date().toISOString() });
-    
+
     // Save back to database
     const updateResult = await pool.request()
       .input('id', sql.NVarChar, projectId)
@@ -488,7 +527,7 @@ router.put('/:projectId/tasks/:taskId', async (req, res) => {
 
     // pool kept open
   } catch (error) {
-    console.error('Update task error:', error);
+    logger.error('Update task error', { error: error.message, projectId: req.params.projectId, taskId: req.params.taskId });
     res.status(500).json({ error: 'Failed to update task', details: error.message });
   }
 });
@@ -498,21 +537,21 @@ router.post('/:projectId/tasks', async (req, res) => {
   try {
     const { projectId } = req.params;
     const newTask = req.body;
-    
+
     const pool = await poolPromise;
-    
+
     // Get current project
     const projectResult = await pool.request()
       .input('id', sql.NVarChar, projectId)
       .query('SELECT * FROM Projects WHERE id = @id');
-    
+
     if (projectResult.recordset.length === 0) {
       return res.status(404).json({ error: 'Project not found' });
     }
-    
+
     const project = projectResult.recordset[0];
     let tasks = project.tasks ? JSON.parse(project.tasks) : [];
-    
+
     // Add timestamp and ensure task has required fields
     const taskWithDefaults = {
       ...newTask,
@@ -521,9 +560,9 @@ router.post('/:projectId/tasks', async (req, res) => {
       updatedAt: new Date().toISOString(),
       notesThread: newTask.notesThread || []
     };
-    
+
     tasks.push(taskWithDefaults);
-    
+
     // Save back to database
     const updateResult = await pool.request()
       .input('id', sql.NVarChar, projectId)
@@ -542,7 +581,7 @@ router.post('/:projectId/tasks', async (req, res) => {
 
     // pool kept open
   } catch (error) {
-    console.error('Create task error:', error);
+    logger.error('Create task error', { error: error.message, projectId: req.params.projectId });
     res.status(500).json({ error: 'Failed to create task', details: error.message });
   }
 });
@@ -551,18 +590,18 @@ router.post('/:projectId/tasks', async (req, res) => {
 router.delete('/:projectId/tasks/:taskId', async (req, res) => {
   try {
     const { projectId, taskId } = req.params;
-    
+
     const pool = await poolPromise;
-    
+
     // Get current project
     const projectResult = await pool.request()
       .input('id', sql.NVarChar, projectId)
       .query('SELECT * FROM Projects WHERE id = @id');
-    
+
     if (projectResult.recordset.length === 0) {
       return res.status(404).json({ error: 'Project not found' });
     }
-    
+
     const project = projectResult.recordset[0];
     let tasks = project.tasks ? JSON.parse(project.tasks) : [];
 
@@ -571,7 +610,7 @@ router.delete('/:projectId/tasks/:taskId', async (req, res) => {
     if (!removed) {
       return res.status(404).json({ error: 'Task not found' });
     }
-    
+
     // Save back to database
     const updateResult = await pool.request()
       .input('id', sql.NVarChar, projectId)
@@ -587,7 +626,7 @@ router.delete('/:projectId/tasks/:taskId', async (req, res) => {
 
     // pool kept open
   } catch (error) {
-    console.error('Delete task error:', error);
+    logger.error('Delete task error', { error: error.message, projectId: req.params.projectId, taskId: req.params.taskId });
     res.status(500).json({ error: 'Failed to delete task', details: error.message });
   }
 });
@@ -661,9 +700,9 @@ async function updateParentProjectRollups(parentProjectId) {
       `);
 
     // pool kept open
-    console.log(`✅ Updated rollups for parent project ${parentProjectId}`);
+    logger.info('Updated rollups for parent project', { parentProjectId });
   } catch (error) {
-    console.error('Update parent rollups error:', error);
+    logger.error('Update parent rollups error', { error: error.message, parentProjectId });
   }
 }
 

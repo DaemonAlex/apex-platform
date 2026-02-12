@@ -2,12 +2,14 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { sql, poolPromise } = require('../db');
+const logger = require('../utils/logger');
+const { auditLog } = require('../middleware/audit');
+const { validate, body, isValidEmail } = require('../middleware/validate');
 const router = express.Router();
 
 // Validate JWT_SECRET is set
 if (!process.env.JWT_SECRET) {
-  console.error('❌ CRITICAL: JWT_SECRET environment variable is not set');
-  console.error('❌ Application cannot start without JWT secret for token signing');
+  logger.error('CRITICAL: JWT_SECRET environment variable is not set');
   process.exit(1);
 }
 
@@ -51,17 +53,19 @@ function validatePassword(password) {
 }
 
 // Login endpoint
-router.post('/login', async (req, res) => {
+router.post('/login',
+  validate([
+    isValidEmail('email'),
+    body('password').notEmpty().withMessage('Password is required')
+  ]),
+  auditLog('User login attempt', 'auth', 'info'),
+  async (req, res) => {
   try {
     const { email, password } = req.body;
-    
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required' });
-    }
 
     // Connect to database using centralized pool
     const pool = await poolPromise;
-    
+
     // Check if Users table exists, create if not
     const tableCheck = await pool.request().query(`
       IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Users' AND xtype='U')
@@ -134,6 +138,7 @@ router.post('/login', async (req, res) => {
     const user = result.recordset[0];
 
     if (!user) {
+      logger.security('Failed login - user not found', { email, ip: req.ip });
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
@@ -141,6 +146,7 @@ router.post('/login', async (req, res) => {
     const isValid = await bcrypt.compare(password, user.password);
 
     if (!isValid) {
+      logger.security('Failed login - invalid password', { email, ip: req.ip, userId: user.id });
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
@@ -172,6 +178,8 @@ router.post('/login', async (req, res) => {
       preferences = {};
     }
 
+    logger.info('Successful login', { email: user.email, userId: user.id, ip: req.ip });
+
     res.json({
       token,
       refreshToken: token, // For simplicity, using same token
@@ -191,19 +199,23 @@ router.post('/login', async (req, res) => {
 
     // Connection pool kept open for reuse
   } catch (error) {
-    console.error('Login error:', error);
+    logger.error('Login error', { error: error.message, ip: req.ip });
     res.status(500).json({ error: 'Login failed', details: error.message });
   }
 });
 
 // Register endpoint (for testing)
-router.post('/register', async (req, res) => {
+router.post('/register',
+  validate([
+    body('name').trim().notEmpty().withMessage('Name is required').isLength({ max: 255 }),
+    isValidEmail('email'),
+    body('password').notEmpty().withMessage('Password is required'),
+    body('role').optional().isIn(['auditor', 'viewer', 'field_ops', 'project_manager', 'admin', 'superadmin', 'owner']).withMessage('Invalid role')
+  ]),
+  auditLog('User registration', 'auth', 'info'),
+  async (req, res) => {
   try {
     const { name, email, password, role = 'auditor' } = req.body;
-    
-    if (!name || !email || !password) {
-      return res.status(400).json({ error: 'Name, email, and password are required' });
-    }
 
     // Validate password requirements
     const passwordValidation = validatePassword(password);
@@ -215,12 +227,12 @@ router.post('/register', async (req, res) => {
     }
 
     const pool = await poolPromise;
-    
+
     // Check if user exists
     const existingUser = await pool.request()
       .input('email', sql.NVarChar, email)
       .query('SELECT id FROM Users WHERE email = @email');
-      
+
     if (existingUser.recordset.length > 0) {
       return res.status(409).json({ error: 'User already exists' });
     }
@@ -247,7 +259,9 @@ router.post('/register', async (req, res) => {
       `);
 
     const newUser = result.recordset[0];
-    
+
+    logger.info('User registered', { email: newUser.email, userId: newUser.id, role: newUser.role });
+
     res.status(201).json({
       message: 'User created successfully',
       user: {
@@ -260,19 +274,20 @@ router.post('/register', async (req, res) => {
 
     // Connection pool kept open for reuse
   } catch (error) {
-    console.error('Register error:', error);
+    logger.error('Register error', { error: error.message, ip: req.ip });
     res.status(500).json({ error: 'Registration failed', details: error.message });
   }
 });
 
 // Request password reset
-router.post('/forgot-password', async (req, res) => {
+router.post('/forgot-password',
+  validate([
+    isValidEmail('email')
+  ]),
+  auditLog('Password reset request', 'auth', 'info'),
+  async (req, res) => {
   try {
     const { email } = req.body;
-
-    if (!email) {
-      return res.status(400).json({ error: 'Email is required' });
-    }
 
     const pool = await poolPromise;
 
@@ -327,30 +342,34 @@ router.post('/forgot-password', async (req, res) => {
       const emailSent = await emailService.sendPasswordReset(email, user.name, resetLink);
 
       if (!emailSent) {
-        console.log(`⚠️ Email service failed, fallback: Password reset link for ${email}: ${resetLink}`);
+        logger.warn('Email service failed for password reset', { email });
       }
     } catch (emailError) {
-      console.error('Email service error:', emailError);
-      console.log(`⚠️ Fallback: Password reset link for ${email}: ${resetLink}`);
+      logger.error('Email service error', { error: emailError.message, email });
     }
+
+    logger.info('Password reset requested', { email, ip: req.ip });
 
     // Connection pool kept open for reuse
     res.json({ message: 'If this email exists, a reset link has been sent.' });
 
   } catch (error) {
-    console.error('Forgot password error:', error);
+    logger.error('Forgot password error', { error: error.message, ip: req.ip });
     res.status(500).json({ error: 'Password reset request failed', details: error.message });
   }
 });
 
 // Reset password with token
-router.post('/reset-password', async (req, res) => {
+router.post('/reset-password',
+  validate([
+    body('token').notEmpty().withMessage('Reset token is required').isHexadecimal().withMessage('Invalid token format'),
+    isValidEmail('email'),
+    body('newPassword').notEmpty().withMessage('New password is required')
+  ]),
+  auditLog('Password reset', 'auth', 'critical'),
+  async (req, res) => {
   try {
     const { token, email, newPassword } = req.body;
-
-    if (!token || !email || !newPassword) {
-      return res.status(400).json({ error: 'Token, email, and new password are required' });
-    }
 
     // Validate password requirements
     const passwordValidation = validatePassword(newPassword);
@@ -378,6 +397,7 @@ router.post('/reset-password', async (req, res) => {
       `);
 
     if (tokenResult.recordset.length === 0) {
+      logger.security('Invalid password reset attempt', { email, ip: req.ip });
       // Connection pool kept open for reuse
       return res.status(400).json({ error: 'Invalid or expired reset token' });
     }
@@ -426,11 +446,13 @@ router.post('/reset-password', async (req, res) => {
         AND (used = 1 OR expires_at < GETDATE())
       `);
 
+    logger.info('Password reset successful', { email, ip: req.ip });
+
     // Connection pool kept open for reuse
     res.json({ message: 'Password reset successfully' });
 
   } catch (error) {
-    console.error('Reset password error:', error);
+    logger.error('Reset password error', { error: error.message, ip: req.ip });
     res.status(500).json({ error: 'Password reset failed', details: error.message });
   }
 });

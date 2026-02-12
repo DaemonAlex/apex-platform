@@ -6,6 +6,7 @@
  */
 
 import { CONFIG } from '../core/config.js';
+import { escapeHtml } from '../utils/sanitize.js';
 
 /**
  * Notification types and their styles
@@ -268,16 +269,6 @@ export function confirm(message, options = {}) {
     // Focus confirm button
     overlay.querySelector('.confirm-btn').focus();
   });
-}
-
-/**
- * Escape HTML to prevent XSS
- */
-function escapeHtml(str) {
-  if (!str) return '';
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
 }
 
 // Add animation styles

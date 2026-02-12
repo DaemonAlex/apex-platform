@@ -4,6 +4,8 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
+const logger = require('./utils/logger');
+
 // Import authentication middleware
 const { authenticateToken, requireRole } = require('./middleware/auth');
 
@@ -25,18 +27,51 @@ const roomStatusRoutes = require('./routes/room-status');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Security middleware
-app.use(helmet());
+// Security middleware - ASRB 5.1.2: Content Security Policy
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: [
+        "'self'",
+        "https://cdn.jsdelivr.net",
+        "https://cdnjs.cloudflare.com",
+        "https://cdn.sheetjs.com"
+      ],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com", "https://cdnjs.cloudflare.com"],
+      connectSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"]
+    }
+  },
+  crossOriginEmbedderPolicy: false // Required for CDN scripts
+}));
 
 // Rate limiting - trust proxy for nginx
 app.set('trust proxy', 1);
-const limiter = rateLimit({
+
+// ASRB 5.1.4: Global rate limit (lowered from 1000)
+const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 1000, // increased limit
+  max: 500,
   standardHeaders: true,
   legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later' }
 });
-app.use(limiter);
+app.use(globalLimiter);
+
+// ASRB 5.1.4: Strict auth rate limit for brute-force protection
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 15, // 15 attempts per 15 minutes
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many authentication attempts, please try again later' }
+});
 
 // CORS configuration
 app.use(cors({
@@ -52,8 +87,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'healthy', 
+  res.status(200).json({
+    status: 'healthy',
     timestamp: new Date().toISOString(),
     service: 'APEX Backend API',
     version: '1.0.0'
@@ -61,8 +96,8 @@ app.get('/health', (req, res) => {
 });
 
 // API Routes
-// Public routes (no authentication required)
-app.use('/api/auth', authRoutes);
+// Public routes (no authentication required) - apply auth rate limiter
+app.use('/api/auth', authLimiter, authRoutes);
 
 // Protected routes (authentication required)
 app.use('/api/projects', authenticateToken, projectRoutes);
@@ -85,8 +120,8 @@ app.use('*', (req, res) => {
 
 // Global error handler
 app.use((err, req, res, next) => {
-  console.error('Server Error:', err);
-  res.status(500).json({ 
+  logger.error('Server error', { error: err.message, stack: err.stack, route: req.originalUrl, method: req.method });
+  res.status(500).json({
     error: 'Internal server error',
     message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
   });
@@ -94,9 +129,7 @@ app.use((err, req, res, next) => {
 
 // Start server
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 APEX Backend API running on port ${PORT}`);
-  console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  logger.info('APEX Backend API started', { port: PORT, environment: process.env.NODE_ENV || 'development' });
 });
 
 module.exports = app;

@@ -17,6 +17,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 
     <style>
         /* ==================== VARIABLES ==================== */
@@ -7033,7 +7034,7 @@
                     const thread = task.notesThread || [];
                     const items = thread.slice(-2).map(n => `
                         <div style="border-left: 3px solid var(--primary-300); padding-left: 0.5rem;">
-                            <div style="font-size: 0.75rem; color: var(--gray-600);">${new Date(n.timestamp).toLocaleString()} — <strong>${n.author || 'Someone'}</strong>${n.role ? ` (${n.role})` : ''}</div>
+                            <div style="font-size: 0.75rem; color: var(--gray-600);">${new Date(n.timestamp).toLocaleString()} — <strong>${escapeHtml(n.author || 'Someone')}</strong>${n.role ? ` (${escapeHtml(n.role)})` : ''}</div>
                             <div style="font-size: 0.85rem; color: var(--gray-800); white-space: pre-wrap;">${(n.content || '').replace(/</g,'&lt;')}</div>
                         </div>`).join('');
                     listEl.innerHTML = (items || '') + (thread.length > 2 ? `<a href="#" style="font-size:0.8rem;" onclick="event.preventDefault(); showAllTaskNotes('${projectId}','${taskId}')">View all notes</a>` : '');
@@ -7045,7 +7046,7 @@
                     const thread = task.notesThread || [];
                     const items = thread.slice(-3).map(n => `
                         <div style="border-left: 3px solid var(--primary-300); padding-left: 0.5rem;">
-                            <div style="font-size: 0.8rem; color: var(--gray-600);">${new Date(n.timestamp).toLocaleString()} — <strong>${n.author || 'Someone'}</strong>${n.role ? ` (${n.role})` : ''}</div>
+                            <div style="font-size: 0.8rem; color: var(--gray-600);">${new Date(n.timestamp).toLocaleString()} — <strong>${escapeHtml(n.author || 'Someone')}</strong>${n.role ? ` (${escapeHtml(n.role)})` : ''}</div>
                             <div style="font-size: 0.9rem; color: var(--gray-900); white-space: pre-wrap;">${(n.content || '').replace(/</g,'&lt;')}</div>
                         </div>`).join('');
                     listElModal.innerHTML = items || '<div style=\'color: var(--gray-500); font-size: 0.9rem;\'>No notes yet.</div>';
@@ -7109,7 +7110,7 @@
                     const thread = task.notesThread || [];
                     const items = thread.slice(-2).map(n => `
                         <div style=\"border-left: 3px solid var(--primary-300); padding-left: 0.5rem;\">
-                            <div style=\"font-size: 0.75rem; color: var(--gray-600);\">${new Date(n.timestamp).toLocaleString()} — <strong>${n.author || 'Someone'}</strong>${n.role ? ` (${n.role})` : ''}</div>
+                            <div style=\"font-size: 0.75rem; color: var(--gray-600);\">${new Date(n.timestamp).toLocaleString()} — <strong>${escapeHtml(n.author || 'Someone')}</strong>${n.role ? ` (${escapeHtml(n.role)})` : ''}</div>
                             <div style=\"font-size: 0.85rem; color: var(--gray-800); white-space: pre-wrap;\">${(n.content || '').replace(/</g,'&lt;')}</div>
 
 
@@ -7177,27 +7178,28 @@
                     const sizeKB = Math.round(att.size / 1024);
                     const date = new Date(att.uploadedAt).toLocaleDateString();
 
+                    const safeFilename = escapeHtml(att.filename);
                     return `
                         <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; background: var(--gray-50); border-radius: 4px;">
                             <span style="font-size: 1.5rem;">${icon}</span>
-                            <div style="flex: 1; min-width: 0; cursor: ${isImage ? 'pointer' : 'default'};" onclick="${isImage ? `previewAttachment('${taskId}', '${att.filename}')` : ''}">
+                            <div style="flex: 1; min-width: 0; cursor: ${isImage ? 'pointer' : 'default'};" onclick="${isImage ? `previewAttachment('${taskId}', '${safeFilename}')` : ''}">
                                 <div style="font-size: 0.9rem; font-weight: 500; color: var(--gray-900); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                                    ${att.filename}
+                                    ${safeFilename}
                                 </div>
                                 <div style="font-size: 0.75rem; color: var(--gray-600);">
                                     ${sizeKB} KB • ${date}
                                 </div>
                             </div>
                             ${isImage ? `
-                                <button class="btn btn-sm btn-outline" onclick="previewAttachment('${taskId}', '${att.filename}')" style="padding: 0.25rem 0.5rem;" title="Preview">
+                                <button class="btn btn-sm btn-outline" onclick="previewAttachment('${taskId}', '${safeFilename}')" style="padding: 0.25rem 0.5rem;" title="Preview">
                                     👁️
                                 </button>
                             ` : ''}
-                            <button class="btn btn-sm btn-outline" onclick="downloadAttachment('${taskId}', '${att.filename}')" style="padding: 0.25rem 0.5rem;" title="Download">
+                            <button class="btn btn-sm btn-outline" onclick="downloadAttachment('${taskId}', '${safeFilename}')" style="padding: 0.25rem 0.5rem;" title="Download">
                                 📥
                             </button>
                             ${hasPermission('tasks.edit') ? `
-                                <button class="btn btn-sm btn-outline" onclick="deleteAttachment('${taskId}', '${att.filename}')" style="padding: 0.25rem 0.5rem; color: var(--danger-600);" title="Delete">
+                                <button class="btn btn-sm btn-outline" onclick="deleteAttachment('${taskId}', '${safeFilename}')" style="padding: 0.25rem 0.5rem; color: var(--danger-600);" title="Delete">
                                     🗑️
                                 </button>
                             ` : ''}
@@ -7461,11 +7463,11 @@
                         <div class="project-details">
                             <div class="project-detail-item">
                                 <span class="detail-label">👤 Requestor:</span>
-                                <span class="detail-value">${project.requestorInfo ? project.requestorInfo.split(',')[0] : 'N/A'}</span>
+                                <span class="detail-value">${escapeHtml(project.requestorInfo ? project.requestorInfo.split(',')[0] : 'N/A')}</span>
                             </div>
                             <div class="project-detail-item">
                                 <span class="detail-label">📍 Location:</span>
-                                <span class="detail-value">${project.siteLocation || 'N/A'}</span>
+                                <span class="detail-value">${escapeHtml(project.siteLocation || 'N/A')}</span>
                             </div>
                             <div class="project-detail-item">
                                 <span class="detail-label">🏢 Business:</span>
@@ -7598,7 +7600,7 @@
                                 ${month.projects.length > 0 ? month.projects.map(project => `
                                     <div class="calendar-item" onclick="viewProject('${project.id}')">
                                         <div class="calendar-item-header">
-                                            <h5>${project.name}</h5>
+                                            <h5>${escapeHtml(project.name)}</h5>
                                             <span class="status-badge ${project.status}">${statusFormatter2025(project.status)}</span>
                                         </div>
                                         <div class="calendar-item-details">
@@ -8469,7 +8471,7 @@
             modal.innerHTML = `
                 <div class="project-modal">
                     <div class="modal-header">
-                        <h3>📋 ${project.name}</h3>
+                        <h3>📋 ${escapeHtml(project.name)}</h3>
                         <button class="close-btn" onclick="this.closest('.project-modal-overlay').remove()">×</button>
                     </div>
 
@@ -8478,9 +8480,9 @@
                             <div class="info-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem;">
                                 <div><strong>Status:</strong> <span class="status-badge ${project.status}">${statusFormatter2025(project.status)}</span></div>
                                 <div><strong>Progress:</strong> ${project.progress || 0}%</div>
-                                <div><strong>Requestor:</strong> ${project.requestorInfo || 'N/A'}</div>
+                                <div><strong>Requestor:</strong> ${escapeHtml(project.requestorInfo || 'N/A')}</div>
                                 <div><strong>Business Line:</strong> ${formatBusinessLine(project.businessLine)}</div>
-                                <div><strong>Location:</strong> ${project.siteLocation || 'N/A'}</div>
+                                <div><strong>Location:</strong> ${escapeHtml(project.siteLocation || 'N/A')}</div>
                                 <div><strong>Type:</strong> ${formatProjectType(project.type)}</div>
                                 <div><strong>Est Budget:</strong> $${(project.estimatedBudget || 0).toLocaleString()}</div>
                                 <div><strong>Actual Budget:</strong> $${(project.actualBudget || 0).toLocaleString()}</div>
@@ -8493,7 +8495,7 @@
                                 <div><strong>Actual Hours:</strong> ${project.actualHours ? Math.round(project.actualHours * 10) / 10 + 'h' : '0h'}</div>
                             </div>
 
-                            ${project.description ? `<div class="project-description-box" style="background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 0.5rem; padding: 0.75rem; margin: 1rem 0; word-wrap: break-word; white-space: pre-wrap;"><strong style="color: var(--gray-700); font-size: 0.875rem;">📄 Project Description:</strong><br><span style="color: var(--gray-800); line-height: 1.5;">${project.description}</span></div>` : ''}
+                            ${project.description ? `<div class="project-description-box" style="background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 0.5rem; padding: 0.75rem; margin: 1rem 0; word-wrap: break-word; white-space: pre-wrap;"><strong style="color: var(--gray-700); font-size: 0.875rem;">📄 Project Description:</strong><br><span style="color: var(--gray-800); line-height: 1.5;">${escapeHtml(project.description)}</span></div>` : ''}
                         </div>
 
                         ${!project.parent_project_id ? `
@@ -8641,7 +8643,7 @@
                                     <span class="phase-badge ${derivePhaseInfo(task.phase).class}" style="font-size: 0.75rem;">${derivePhaseInfo(task.phase).name}</span>
                                 </div>
                                 
-                                <h5 class="task-name" style="margin: 0 0 0.5rem 0; font-size: 1.1rem; color: var(--gray-900);">${task.name}</h5>
+                                <h5 class="task-name" style="margin: 0 0 0.5rem 0; font-size: 1.1rem; color: var(--gray-900);">${escapeHtml(task.name)}</h5>
                                 
                                 <div class="task-status-row" style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem;">
                                     <span class="${rag.class}" title="${rag.label}">${rag.icon}</span>
@@ -8651,14 +8653,14 @@
                                         <option value="completed" ${task.status === 'completed' ? 'selected' : ''}>✅ Completed</option>
                                         <option value="on-hold" ${task.status === 'on-hold' ? 'selected' : ''}>⏸️ On Hold</option>
                                     </select>
-                                    ${task.priority ? `<span class="task-priority ${task.priority}">${statusFormatter2025(task.priority) || task.priority}</span>` : ''}
+                                    ${task.priority ? `<span class="task-priority ${task.priority}">${statusFormatter2025(task.priority) || escapeHtml(task.priority)}</span>` : ''}
                                     ${task.fieldOperationsRequired ? `<span class="field-ops-badge">🔧 Field Ops</span>` : ''}
                                 </div>
                                 
                                 ${task.description ? `
                                 <div class="task-description-box" style="background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 0.5rem; padding: 0.5rem 0.75rem; margin-bottom: 0.75rem;">
                                     <strong style="color: var(--gray-700); font-size: 0.75rem; display: block; margin-bottom: 0.25rem;">📝 Task Details:</strong>
-                                    <div style="color: var(--gray-800); font-size: 0.875rem; line-height: 1.4; max-height: 3.6em; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;">${task.description}</div>
+                                    <div style="color: var(--gray-800); font-size: 0.875rem; line-height: 1.4; max-height: 3.6em; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;">${escapeHtml(task.description)}</div>
                                 </div>` : ''}
 
                                 ${hasChildren ? `
@@ -8718,13 +8720,13 @@
                                 <button class="btn btn-danger btn-sm" onclick="deleteTask('${projectId}', '${taskId}')" title="Delete Task">🗑️ Delete</button>
                             </div>
                         </div>
-                        ${task.notes ? `<div class="task-notes"><strong>Notes:</strong> ${task.notes}</div>` : ''}
+                        ${task.notes ? `<div class="task-notes"><strong>Notes:</strong> ${escapeHtml(task.notes)}</div>` : ''}
                         <div class="task-details">
                             ${task.startDate ? `<span class="task-detail">📅 Start: ${formatDate(task.startDate)}</span>` : ''}
                             ${task.dueDate ? `<span class="task-detail">⏰ Due: ${formatDate(task.dueDate)}</span>` : ''}
                             ${task.estimatedHours ? `<span class="task-detail">📊 Est: ${task.estimatedHours}h</span>` : ''}
                             ${task.actualHours ? `<span class="task-detail">⏱️ Actual: ${Math.round(task.actualHours * 10) / 10}h</span>` : ''}
-                            ${task.location ? `<span class="task-detail">📍 ${task.location}</span>` : ''}
+                            ${task.location ? `<span class="task-detail">📍 ${escapeHtml(task.location)}</span>` : ''}
                         </div>
                         ${task.fieldOperationsRequired && (task.scheduledStartTime || task.scheduledEndTime) ? `
                             <div class="field-ops-schedule">
@@ -8746,7 +8748,7 @@
                                     if (items.length === 0) return '<div style=\'color: var(--gray-500); font-size: 0.9rem;\'>No notes yet.</div>';
                                     return items.map(n => `
                                         <div style="border-left: 3px solid var(--primary-300); padding-left: 0.5rem;">
-                                            <div style="font-size: 0.75rem; color: var(--gray-600);">${new Date(n.timestamp).toLocaleString()} — <strong>${(n.author || 'Someone')}</strong>${n.role ? ` (${n.role})` : ''}</div>
+                                            <div style="font-size: 0.75rem; color: var(--gray-600);">${new Date(n.timestamp).toLocaleString()} — <strong>${escapeHtml(n.author || 'Someone')}</strong>${n.role ? ` (${escapeHtml(n.role)})` : ''}</div>
                                             <div style="font-size: 0.85rem; color: var(--gray-800); white-space: pre-wrap;">${(n.content || '').replace(/</g,'&lt;')}</div>
                                         </div>
                                     `).join('');
@@ -8865,11 +8867,11 @@
                     <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.75rem;">
                         <div style="flex: 1;">
                             <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
-                                <h5 style="margin: 0; color: var(--gray-900); font-size: 1.1rem;">📍 ${location.name}</h5>
+                                <h5 style="margin: 0; color: var(--gray-900); font-size: 1.1rem;">📍 ${escapeHtml(location.name)}</h5>
                                 <span style="background: ${statusColor}; color: white; padding: 0.25rem 0.75rem; border-radius: 1rem; font-size: 0.75rem; font-weight: 600;">${statusFormatter2025(location.status)}</span>
                             </div>
-                            ${location.siteLocation ? `<div style="color: var(--gray-600); font-size: 0.875rem; margin-bottom: 0.5rem;">🏢 ${location.siteLocation}</div>` : ''}
-                            ${location.description ? `<div style="color: var(--gray-700); font-size: 0.875rem; margin-bottom: 0.5rem;">${location.description.length > 100 ? location.description.substring(0, 100) + '...' : location.description}</div>` : ''}
+                            ${location.siteLocation ? `<div style="color: var(--gray-600); font-size: 0.875rem; margin-bottom: 0.5rem;">🏢 ${escapeHtml(location.siteLocation)}</div>` : ''}
+                            ${location.description ? `<div style="color: var(--gray-700); font-size: 0.875rem; margin-bottom: 0.5rem;">${escapeHtml(location.description.length > 100 ? location.description.substring(0, 100) + '...' : location.description)}</div>` : ''}
                         </div>
                         <div style="display: flex; gap: 0.5rem;">
                             <button class="btn btn-sm btn-primary" onclick="viewProject('${location.id}')" title="View Location Details">👁️</button>
@@ -9040,7 +9042,7 @@
                             <select id="parentTask" name="parentTaskId">
                                 <option value="">No Parent (Top Level Task)</option>
                                 ${existingTasks.filter(t => !t.parentTaskId).map(task =>
-                                    `<option value="${task.id}">${task.name}</option>`
+                                    `<option value="${task.id}">${escapeHtml(task.name)}</option>`
                                 ).join('')}
                             </select>
                         </div>` : ''}
@@ -9271,15 +9273,15 @@
                         <button class="close-btn" onclick="this.closest('.task-modal-overlay').remove()">×</button>
                     </div>
                     <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
-                        <h4 style="margin-top: 0;">${task.name}</h4>
+                        <h4 style="margin-top: 0;">${escapeHtml(task.name)}</h4>
                         <div style="display: flex; gap: 0.5rem; align-items: center; margin: 0.5rem 0 1rem 0;">
                             <span class="phase-badge ${phaseInfo.class}">${phaseInfo.name}</span>
                             <span class="${rag.class}" title="${rag.label}">${rag.icon}</span>
                             <span class="status-badge ${task.status || 'not-started'}">${statusFormatter2025(task.status)}</span>
                         </div>
-                        ${task.description ? `<p style="color: var(--gray-700);">${task.description}</p>` : ''}
+                        ${task.description ? `<p style="color: var(--gray-700);">${escapeHtml(task.description)}</p>` : ''}
                         <div class="info-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem;">
-                            ${task.assignee ? `<div><strong>Assigned:</strong> ${task.assignee}</div>` : ''}
+                            ${task.assignee ? `<div><strong>Assigned:</strong> ${escapeHtml(task.assignee)}</div>` : ''}
                             ${task.priority ? `<div><strong>Priority:</strong> ${statusFormatter2025(task.priority) || task.priority}</div>` : ''}
                             ${task.estimatedHours ? `<div><strong>Est. Hours:</strong> ${task.estimatedHours}h</div>` : ''}
                             ${task.startDate ? `<div><strong>Start:</strong> ${formatDate(task.startDate)}</div>` : ''}
@@ -9288,7 +9290,7 @@
                         ${task.notes ? `
                             <div style="background: #f8f9fa; padding: 0.5rem; border-radius: 0.25rem; margin-top: 1rem;">
                                 <strong style="font-size: 0.85rem; color: var(--gray-700);">PM Notes</strong>
-                                <p style="font-size: 0.9rem; color: var(--gray-700); margin: 0.25rem 0 0 0;">${task.notes}</p>
+                                <p style="font-size: 0.9rem; color: var(--gray-700); margin: 0.25rem 0 0 0;">${escapeHtml(task.notes)}</p>
                             </div>
                         ` : ''}
 
@@ -9304,7 +9306,7 @@
                                     if (items.length === 0) return '<div style=\'color: var(--gray-500); font-size: 0.9rem;\'>No notes yet.</div>';
                                     return items.map(n => `
                                         <div style=\"border-left: 3px solid var(--primary-300); padding-left: 0.5rem;\">
-                                            <div style=\"font-size: 0.8rem; color: var(--gray-600);\">${new Date(n.timestamp).toLocaleString()} — <strong>${(n.author || 'Someone')}</strong>${n.role ? ` (${n.role})` : ''}</div>
+                                            <div style=\"font-size: 0.8rem; color: var(--gray-600);\">${new Date(n.timestamp).toLocaleString()} — <strong>${escapeHtml(n.author || 'Someone')}</strong>${n.role ? ` (${escapeHtml(n.role)})` : ''}</div>
                                             <div style=\"font-size: 0.9rem; color: var(--gray-900); white-space: pre-wrap;\">${(n.content || '').replace(/</g,'&lt;')}</div>
                                         </div>
                                     `).join('');
@@ -9375,12 +9377,12 @@
                     <form class="modal-body" onsubmit="updateTask(event, '${projectId}', '${taskId}')">
                         <div class="form-group">
                             <label for="editTaskName">Task Name *</label>
-                            <input type="text" id="editTaskName" name="name" value="${task.name}" required>
+                            <input type="text" id="editTaskName" name="name" value="${escapeHtml(task.name)}" required>
                         </div>
 
                         <div class="form-group">
                             <label for="editTaskDescription">Description</label>
-                            <textarea id="editTaskDescription" name="description" rows="3">${task.description || ''}</textarea>
+                            <textarea id="editTaskDescription" name="description" rows="3">${escapeHtml(task.description || '')}</textarea>
                         </div>
 
                         <div class="form-row">
@@ -9427,7 +9429,7 @@
                         <div class="form-row">
                             <div class="form-group">
                                 <label for="editTaskAssignee">Assignee</label>
-                                <input type="text" id="editTaskAssignee" name="assignee" value="${task.assignee || ''}" placeholder="Assigned to">
+                                <input type="text" id="editTaskAssignee" name="assignee" value="${escapeHtml(task.assignee || '')}" placeholder="Assigned to">
                             </div>
                             <div class="form-group">
                                 <!-- Empty for layout -->
@@ -9710,7 +9712,7 @@
                         <form id="fieldOpsForm" class="form-container">
                     <div class="form-group">
                         <label for="location">Location *</label>
-                        <input type="text" id="location" name="location" value="${task.location || ''}" required>
+                        <input type="text" id="location" name="location" value="${escapeHtml(task.location || '')}" required>
                     </div>
 
                     <div class="form-group">
@@ -9938,7 +9940,7 @@
             modal.innerHTML = `
                 <div class="project-modal task-modal">
                     <div class="modal-header">
-                        <h3>Log Time - ${task.name}</h3>
+                        <h3>Log Time - ${escapeHtml(task.name)}</h3>
                         <button class="close-btn" onclick="this.closest('.task-modal-overlay').remove()">×</button>
                     </div>
                     <div class="modal-body">
@@ -10211,18 +10213,18 @@
                         <div class="form-row">
                             <div class="form-group">
                                 <label for="editProjectName">Project Name *</label>
-                                <input type="text" id="editProjectName" name="name" value="${project.name}" required>
+                                <input type="text" id="editProjectName" name="name" value="${escapeHtml(project.name)}" required>
                             </div>
                             <div class="form-group">
                                 <label for="editRequestorInfo">Requestor Information *</label>
-                                <input type="text" id="editRequestorInfo" name="requestorInfo" value="${project.requestorInfo || ''}" placeholder="Name, Company, Contact" required>
+                                <input type="text" id="editRequestorInfo" name="requestorInfo" value="${escapeHtml(project.requestorInfo || '')}" placeholder="Name, Company, Contact" required>
                             </div>
                         </div>
 
                         <div class="form-row">
                             <div class="form-group">
                                 <label for="editSiteLocation">Site/Location *</label>
-                                <input type="text" id="editSiteLocation" name="siteLocation" value="${project.siteLocation || ''}" placeholder="Address or Site Name" required>
+                                <input type="text" id="editSiteLocation" name="siteLocation" value="${escapeHtml(project.siteLocation || '')}" placeholder="Address or Site Name" required>
                             </div>
                             <div class="form-group">
                                 <label for="editBusinessLine">Business Line *</label>
@@ -10250,7 +10252,7 @@
 
                         <div class="form-group">
                             <label for="editProjectDescription">Project Description</label>
-                            <textarea id="editProjectDescription" name="description" rows="3" placeholder="Detailed project requirements and scope">${project.description || ''}</textarea>
+                            <textarea id="editProjectDescription" name="description" rows="3" placeholder="Detailed project requirements and scope">${escapeHtml(project.description || '')}</textarea>
                         </div>
 
                         <div class="form-row">
@@ -10613,7 +10615,7 @@
                         ${thread.length === 0 ? '<div style="color: var(--gray-500);">No notes yet.</div>' : ''}
                         ${thread.map(n => `
                             <div style=\"border-left: 3px solid var(--primary-300); padding-left: 0.5rem; margin-bottom: 0.5rem;\">
-                                <div style=\"font-size: 0.8rem; color: var(--gray-600);\">${new Date(n.timestamp).toLocaleString()} — <strong>${n.author || 'Someone'}</strong>${n.role ? ` (${n.role})` : ''}</div>
+                                <div style=\"font-size: 0.8rem; color: var(--gray-600);\">${new Date(n.timestamp).toLocaleString()} — <strong>${escapeHtml(n.author || 'Someone')}</strong>${n.role ? ` (${escapeHtml(n.role)})` : ''}</div>
                                 <div style=\"white-space: pre-wrap; color: var(--gray-900);\">${(n.content || '').replace(/</g,'&lt;')}</div>
                                 <div style=\"text-align:right; margin-top:4px;\">${hasPermission('tasks.notes.edit') ? `<a href=\"#\" onclick=\"event.preventDefault(); editTaskNote('${projectId}','${taskId}','${n.id}')\">Edit</a>` : ''}</div>
                             </div>
@@ -10668,7 +10670,7 @@
                     const thread = task.notesThread;
                     const items = thread.slice(-2).map(n => `
                         <div style=\"border-left: 3px solid var(--primary-300); padding-left: 0.5rem;\">
-                            <div style=\"font-size: 0.75rem; color: var(--gray-600);\">${new Date(n.timestamp).toLocaleString()} — <strong>${n.author || 'Someone'}</strong>${n.role ? ` (${n.role})` : ''}</div>
+                            <div style=\"font-size: 0.75rem; color: var(--gray-600);\">${new Date(n.timestamp).toLocaleString()} — <strong>${escapeHtml(n.author || 'Someone')}</strong>${n.role ? ` (${escapeHtml(n.role)})` : ''}</div>
                             <div style=\"font-size: 0.85rem; color: var(--gray-800); white-space: pre-wrap;\">${(n.content || '').replace(/</g,'&lt;')}</div>
                         </div>`).join('');
                     listEl.innerHTML = (items || '') + (thread.length > 2 ? `<a href=\"#\" style=\"font-size:0.8rem;\" onclick=\"event.preventDefault(); showAllTaskNotes('${projectId}','${taskId}')\">View all notes</a>` : '');
@@ -10680,7 +10682,7 @@
                     const thread = task.notesThread || [];
                     const items = thread.slice(-3).map(n => `
                         <div style="border-left: 3px solid var(--primary-300); padding-left: 0.5rem;">
-                            <div style="font-size: 0.8rem; color: var(--gray-600);">${new Date(n.timestamp).toLocaleString()} — <strong>${n.author || 'Someone'}</strong>${n.role ? ` (${n.role})` : ''}</div>
+                            <div style="font-size: 0.8rem; color: var(--gray-600);">${new Date(n.timestamp).toLocaleString()} — <strong>${escapeHtml(n.author || 'Someone')}</strong>${n.role ? ` (${escapeHtml(n.role)})` : ''}</div>
                             <div style="font-size: 0.9rem; color: var(--gray-900); white-space: pre-wrap;">${(n.content || '').replace(/</g,'&lt;')}</div>
                         </div>`).join('');
                     listElModal.innerHTML = items || '<div style=\'color: var(--gray-500); font-size: 0.9rem;\'>No notes yet.</div>';
@@ -10718,15 +10720,15 @@
                         <div style=\"display: flex; justify-content: space-between; align-items: flex-start;\">
                             <div style=\"flex: 1;\">
                                 <div style=\"display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;\">
-                                    <h5 style=\"margin: 0;\">${task.name}</h5>
+                                    <h5 style=\"margin: 0;\">${escapeHtml(task.name)}</h5>
                                     <span class=\"${rag.class}\" style=\"font-size: 0.8rem;\" title=\"${rag.label}\">${rag.icon}</span>
                                     ${task.status === 'completed' ? '<span style=\"color: var(--success-500); font-size: 0.8rem;\">✅ Completed</span>' : ''}
                                 </div>
-                                <p style=\"color: var(--gray-600); font-size: 0.875rem; margin: 0 0 0.5rem 0;\">${task.description || 'No description'}</p>
+                                <p style=\"color: var(--gray-600); font-size: 0.875rem; margin: 0 0 0.5rem 0;\">${escapeHtml(task.description || 'No description')}</p>
                                 <div style=\"display: flex; gap: 1rem; font-size: 0.8rem; color: var(--gray-500); margin-bottom: 0.5rem;\">
                                     <span class=\"phase-badge ${phaseInfo.class}\">${phaseInfo.name}</span>
                                     <span><strong>Status:</strong> <span class=\"status-badge ${task.status || 'not-started'}\">${statusFormatter2025(task.status)}</span></span>
-                                    ${task.assignee ? `<span><strong>Assigned:</strong> ${task.assignee}</span>` : ''}
+                                    ${task.assignee ? `<span><strong>Assigned:</strong> ${escapeHtml(task.assignee)}</span>` : ''}
                                     ${task.priority ? `<span><strong>Priority:</strong> ${task.priority}</span>` : ''}
                                     ${task.estimatedHours ? `<span><strong>Est Hours:</strong> ${task.estimatedHours}h</span>` : ''}
                                 </div>
@@ -10734,7 +10736,7 @@
 
                                     <div style=\"background: #f8f9fa; padding: 0.5rem; border-radius: 0.25rem; margin-top: 0.5rem;\">
                                         <strong style=\"font-size: 0.8rem; color: var(--gray-700);\">PM Notes:</strong>
-                                        <p style=\"font-size: 0.8rem; color: var(--gray-600); margin: 0.25rem 0 0 0;\">${task.notes}</p>
+                                        <p style=\"font-size: 0.8rem; color: var(--gray-600); margin: 0.25rem 0 0 0;\">${escapeHtml(task.notes)}</p>
                                     </div>
                                 ` : ''}
                                 ${task.completedDate ? `
@@ -11546,9 +11548,9 @@
                         <div class="insight-card insight-${insight.type}">
                             <div class="insight-header">
                                 <span class="insight-icon">${insight.type === 'success' ? '✅' : insight.type === 'warning' ? '⚠️' : 'ℹ️'}</span>
-                                <strong>${insight.title}</strong>
+                                <strong>${escapeHtml(insight.title)}</strong>
                             </div>
-                            <p>${insight.message}</p>
+                            <p>${escapeHtml(insight.message)}</p>
                         </div>
                     `).join('');
                 }
@@ -11568,7 +11570,7 @@
                             const isOverdue = project.endDate && new Date(project.endDate) < new Date();
                             return `
                                 <div class="critical-project-item">
-                                    <div class="critical-project-name">${project.name}</div>
+                                    <div class="critical-project-name">${escapeHtml(project.name)}</div>
                                     <div class="critical-project-details">
                                         <span class="status-badge ${project.status}">${statusFormatter2025(project.status)}</span>
                                         <span class="progress">${project.progress || 0}% complete</span>
@@ -12273,7 +12275,7 @@
                                     <tbody>
                                         ${breakfixData.projects.map(project => `
                                             <tr>
-                                                <td>${project.name}</td>
+                                                <td>${escapeHtml(project.name)}</td>
                                                 <td>
                                                     <span class="status-badge ${project.status}">${project.status}</span>
                                                 </td>
@@ -12345,7 +12347,7 @@
                                     <tbody>
                                         ${refreshData.projects.map(project => `
                                             <tr>
-                                                <td>${project.name}</td>
+                                                <td>${escapeHtml(project.name)}</td>
                                                 <td>
                                                     <span class="status-badge ${project.status}">${project.status}</span>
                                                 </td>
@@ -12377,7 +12379,7 @@
                                 <tbody>
                                     ${financialData.projectBreakdown.map(project => `
                                         <tr>
-                                            <td>${project.name}</td>
+                                            <td>${escapeHtml(project.name)}</td>
                                             <td>$${project.estimated.toLocaleString()}</td>
                                             <td>$${project.actual.toLocaleString()}</td>
                                             <td class="${project.variance >= 0 ? 'positive' : 'negative'}">
@@ -12872,7 +12874,7 @@
 
                     // Build row with role-based column visibility
                     const cells = [
-                        `<td><strong>${project.name}</strong></td>`, // name
+                        `<td><strong>${escapeHtml(project.name)}</strong></td>`, // name
                         `<td><span class="${ragInfo[ragStatus].class}">${ragInfo[ragStatus].icon} ${ragInfo[ragStatus].label}</span></td>`, // RAG status
                         `<td>
                             <div class="progress-bar">
@@ -13230,10 +13232,10 @@
                             <tbody>
                                 ${reportData.projects.map(project => `
                                     <tr>
-                                        <td>${project.name}</td>
+                                        <td>${escapeHtml(project.name)}</td>
                                         <td>${statusFormatter2025(project.status)}</td>
                                         <td>${project.progress}%</td>
-                                        <td>${project.client}</td>
+                                        <td>${escapeHtml(project.client)}</td>
                                         <td>${project.endDate ? formatDate(project.endDate) : 'N/A'}</td>
                                     </tr>
                                 `).join('')}
@@ -13780,10 +13782,10 @@
 
                                 return `
                                     <div style="margin-bottom: 0.75rem; padding: 0.75rem; background: var(--gray-50); border-radius: 6px; border-left: 3px solid ${borderColor};">
-                                        <div style="font-weight: 500; margin-bottom: 0.25rem; color: var(--gray-800); font-size: 0.9rem;">${task.taskName}</div>
-                                        <div style="font-size: 0.75rem; color: var(--gray-600); margin-bottom: 0.25rem;">${task.projectName}</div>
+                                        <div style="font-weight: 500; margin-bottom: 0.25rem; color: var(--gray-800); font-size: 0.9rem;">${escapeHtml(task.taskName)}</div>
+                                        <div style="font-size: 0.75rem; color: var(--gray-600); margin-bottom: 0.25rem;">${escapeHtml(task.projectName)}</div>
                                         <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem;">
-                                            <span style="color: var(--gray-600);">${task.assignee}</span>
+                                            <span style="color: var(--gray-600);">${escapeHtml(task.assignee)}</span>
                                             <span style="color: ${textColor}; font-weight: 500;">${label}</span>
                                         </div>
                                     </div>
@@ -14731,8 +14733,8 @@
         
         function renderScheduleCard(job) {
             const workTypeBadgeClass = job.workType ? job.workType.toLowerCase().replace('/', '') : 'install';
-            const projectTag = job.projectId ? 
-                `<span class="project-tag">[${job.projectCode || job.projectId}]</span>` : '';
+            const projectTag = job.projectId ?
+                `<span class="project-tag">[${escapeHtml(job.projectCode || job.projectId)}]</span>` : '';
             const taskIndicator = job.taskId ? 
                 `<span style="color: var(--primary-600); font-size: 0.75rem; margin-left: 0.5rem;">📌 Task-linked</span>` : '';
             const rescheduleIndicator = job.rescheduleHistory && job.rescheduleHistory.length > 0 ? 
@@ -14746,20 +14748,20 @@
                     <div class="schedule-details">
                         <div class="schedule-title">
                             ${projectTag}
-                            ${job.title || job.workType}
+                            ${escapeHtml(job.title || job.workType)}
                             ${taskIndicator}
                             ${rescheduleIndicator}
                         </div>
                         <div style="color: var(--gray-600); font-size: 0.875rem;">
-                            ${job.client} - ${job.location}
+                            ${escapeHtml(job.client)} - ${escapeHtml(job.location)}
                         </div>
                         <div style="color: var(--gray-500); font-size: 0.875rem;">
-                            Assigned to: ${job.assignedTo} ${job.vendor ? '(Vendor)' : ''}
+                            Assigned to: ${escapeHtml(job.assignedTo)} ${job.vendor ? '(Vendor)' : ''}
                         </div>
                     </div>
                     <div style="display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-end;">
                         <span class="work-type-badge ${workTypeBadgeClass}">
-                            ${job.workType}
+                            ${escapeHtml(job.workType)}
                         </span>
                         <button class="btn btn-sm btn-secondary" onclick="viewFieldJob('${job.id}')">
                             View Details
@@ -14785,10 +14787,10 @@
                     <div class="pending-card">
                         <div class="pending-info">
                             <div style="font-weight: 600; color: var(--gray-900);">
-                                ${job.projectId ? `[${job.projectCode}] ` : ''}${job.title}
+                                ${job.projectId ? `[${escapeHtml(job.projectCode)}] ` : ''}${escapeHtml(job.title)}
                             </div>
                             <div style="color: var(--gray-600); font-size: 0.875rem;">
-                                ${job.client} - ${job.workType}
+                                ${escapeHtml(job.client)} - ${escapeHtml(job.workType)}
                             </div>
                             <div style="color: var(--gray-500); font-size: 0.875rem;">
                                 Requested: ${new Date(job.requestedDate).toLocaleDateString()}
@@ -14866,7 +14868,7 @@
                             return `
                                 <div class="calendar-event work-type-badge ${workTypeClass}" 
                                      onclick="event.stopPropagation(); viewFieldJob('${job.id}')">
-                                    ${job.projectCode ? `[${job.projectCode}] ` : ''}${job.workType || 'AV Installation'}
+                                    ${job.projectCode ? `[${escapeHtml(job.projectCode)}] ` : ''}${escapeHtml(job.workType || 'AV Installation')}
                                 </div>
                             `;
                         }).join('')}
@@ -15209,14 +15211,14 @@
                         </div>
                         <div class="schedule-details">
                             <div class="schedule-title">
-                                ${job.projectCode ? `[${job.projectCode}] ` : ''}${job.title}
+                                ${job.projectCode ? `[${escapeHtml(job.projectCode)}] ` : ''}${escapeHtml(job.title)}
                             </div>
                             <div style="color: var(--gray-600); font-size: 0.875rem;">
-                                ${job.client} - Completed by ${job.assignedTo}
+                                ${escapeHtml(job.client)} - Completed by ${escapeHtml(job.assignedTo)}
                             </div>
                         </div>
                         <span class="work-type-badge ${job.workType.toLowerCase().replace('/', '')}">
-                            ${job.workType}
+                            ${escapeHtml(job.workType)}
                         </span>
                     </div>
                 `).join('');
@@ -15263,36 +15265,36 @@
                     <div class="modal-body">
                         <div style="display: grid; gap: 1rem;">
                             <div>
-                                <strong>Work Type:</strong> ${job.workType}
+                                <strong>Work Type:</strong> ${escapeHtml(job.workType)}
                             </div>
                             <div>
                                 <strong>Date:</strong> ${new Date(job.date).toLocaleDateString()}
-                                ${job.startTime ? ` at ${job.startTime}` : ''}
+                                ${job.startTime ? ` at ${escapeHtml(job.startTime)}` : ''}
                             </div>
                             <div>
-                                <strong>Client:</strong> ${job.client}
+                                <strong>Client:</strong> ${escapeHtml(job.client)}
                             </div>
                             <div>
-                                <strong>Location:</strong> ${job.location}
+                                <strong>Location:</strong> ${escapeHtml(job.location)}
                             </div>
                             <div>
-                                <strong>Description:</strong> ${job.title}
+                                <strong>Description:</strong> ${escapeHtml(job.title)}
                             </div>
                             <div>
-                                <strong>Assigned To:</strong> ${job.assignedTo} ${job.vendor ? '(Vendor)' : '(Internal)'}
+                                <strong>Assigned To:</strong> ${escapeHtml(job.assignedTo)} ${job.vendor ? '(Vendor)' : '(Internal)'}
                             </div>
                             ${job.projectId ? `
                                 <div>
-                                    <strong>Related Project:</strong> 
+                                    <strong>Related Project:</strong>
                                     <a href="#" onclick="showProjectView('${job.projectId}'); this.closest('.modal-overlay').remove();">
-                                        ${job.projectCode}
+                                        ${escapeHtml(job.projectCode)}
                                     </a>
                                 </div>
                             ` : ''}
                             ${job.notes ? `
                                 <div>
                                     <strong>Notes:</strong><br>
-                                    ${job.notes}
+                                    ${escapeHtml(job.notes)}
                                 </div>
                             ` : ''}
                             ${job.rescheduleHistory && job.rescheduleHistory.length > 0 ? `
@@ -15303,9 +15305,9 @@
                                             <div style="margin-bottom: ${index < job.rescheduleHistory.length - 1 ? '0.75rem' : '0'}; padding-bottom: ${index < job.rescheduleHistory.length - 1 ? '0.75rem' : '0'}; border-bottom: ${index < job.rescheduleHistory.length - 1 ? '1px solid var(--warning-200)' : 'none'};">
                                                 <div style="font-weight: 600; color: var(--warning-800);">Reschedule ${index + 1}:</div>
                                                 <div><strong>Date Change:</strong> ${new Date(r.originalDate).toLocaleDateString()} → ${new Date(r.newDate).toLocaleDateString()}</div>
-                                                <div><strong>Reason:</strong> ${r.reason}${r.otherReason ? ' - ' + r.otherReason : ''}</div>
-                                                <div><strong>Rescheduled:</strong> ${new Date(r.rescheduledAt).toLocaleDateString()} by ${r.rescheduledBy}</div>
-                                                ${r.notes ? `<div><strong>Notes:</strong> ${r.notes}</div>` : ''}
+                                                <div><strong>Reason:</strong> ${escapeHtml(r.reason)}${r.otherReason ? ' - ' + escapeHtml(r.otherReason) : ''}</div>
+                                                <div><strong>Rescheduled:</strong> ${new Date(r.rescheduledAt).toLocaleDateString()} by ${escapeHtml(r.rescheduledBy)}</div>
+                                                ${r.notes ? `<div><strong>Notes:</strong> ${escapeHtml(r.notes)}</div>` : ''}
                                             </div>
                                         `).join('')}
                                     </div>
@@ -15411,10 +15413,10 @@
                     <form onsubmit="saveReschedule(event)" class="modal-body" data-job-id="${job.id}">
                         <div style="background: var(--gray-50); padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem;">
                             <h4 style="margin: 0 0 0.5rem 0;">Current Schedule</h4>
-                            <div><strong>${job.workType}:</strong> ${job.title}</div>
-                            <div><strong>Client:</strong> ${job.client}</div>
-                            <div><strong>Current Date:</strong> ${new Date(job.date).toLocaleDateString()} ${job.startTime ? `at ${job.startTime}` : ''}</div>
-                            <div><strong>Assigned To:</strong> ${job.assignedTo}</div>
+                            <div><strong>${escapeHtml(job.workType)}:</strong> ${escapeHtml(job.title)}</div>
+                            <div><strong>Client:</strong> ${escapeHtml(job.client)}</div>
+                            <div><strong>Current Date:</strong> ${new Date(job.date).toLocaleDateString()} ${job.startTime ? `at ${escapeHtml(job.startTime)}` : ''}</div>
+                            <div><strong>Assigned To:</strong> ${escapeHtml(job.assignedTo)}</div>
                         </div>
                         
                         <div class="form-row">
@@ -15700,13 +15702,13 @@
                 <tr>
                     <td>
                         <div style="display: flex; align-items: center;">
-                            <div class="user-avatar-small">${user.avatar || ''}</div>
+                            <div class="user-avatar-small">${escapeHtml(user.avatar || '')}</div>
                             <div>
-                                <div style="font-weight: 500;">${user.name}</div>
+                                <div style="font-weight: 500;">${escapeHtml(user.name)}</div>
                             </div>
                         </div>
                     </td>
-                    <td>${user.email}</td>
+                    <td>${escapeHtml(user.email)}</td>
                     <td>
                         <span class="status-badge ${(user.Role?.name || user.role || '').toLowerCase()}">${user.Role?.displayName || (user.role || '').replace('-', ' ')}</span>
                     </td>
@@ -15742,10 +15744,10 @@
             rolesGrid.innerHTML = (AppState.roles || []).map(role => `
                 <div class="role-card">
                     <div class="role-card-header">
-                        <div class="role-name">${role.displayName || role.name}</div>
+                        <div class="role-name">${escapeHtml(role.displayName || role.name)}</div>
                         <span class="role-users-count">${(role.userCount ?? 0)} users</span>
                     </div>
-                    <p style="margin-bottom: 1rem; color: var(--gray-600); font-size: 0.875rem;">${role.description || ''}</p>
+                    <p style="margin-bottom: 1rem; color: var(--gray-600); font-size: 0.875rem;">${escapeHtml(role.description || '')}</p>
                     <ul class="permission-list">
                         ${(role.permissions || []).slice(0, 4).map(perm => `
                             <li class="permission-item granted">
@@ -15879,7 +15881,7 @@
 
         function loadAuditLog() {
             const auditTableBody = document.getElementById('auditTableBody');
-            const escapeHtml = (s) => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+            const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
             const fmt = (v) => escapeHtml(typeof v === 'object' ? JSON.stringify(v) : v);
             const rows = (AppState.auditLog || []).map(entry => {
                 const userName = entry.user || entry.actor?.name || 'Unknown';
@@ -15948,15 +15950,15 @@
                 <tr>
                     <td>
                         <div style="display: flex; align-items: center;">
-                            <div class="user-avatar-small">${user.avatar}</div>
+                            <div class="user-avatar-small">${escapeHtml(user.avatar)}</div>
 
 
                             <div>
-                                <div style="font-weight: 500;">${user.name}</div>
+                                <div style="font-weight: 500;">${escapeHtml(user.name)}</div>
                             </div>
                         </div>
                     </td>
-                    <td>${user.email}</td>
+                    <td>${escapeHtml(user.email)}</td>
                     <td>
                         <span class="status-badge ${(user.Role?.name || user.role || '').toLowerCase()}">${user.Role?.displayName || (user.role || '').replace('-', ' ')}</span>
                     </td>
@@ -15999,7 +16001,7 @@
                                 <select name="role" class="form-control" required>
                                     <option value="">Select a role</option>
                                     ${AppState.roles.map(role =>
-                                        `<option value="${role.id}">${role.name}</option>`
+                                        `<option value="${role.id}">${escapeHtml(role.name)}</option>`
                                     ).join('')}
                                 </select>
                             </div>
@@ -16080,16 +16082,16 @@
                     <form onsubmit="submitEditUser(event, '${user.id}')">
                       <div class="form-group">
                         <label>Full Name</label>
-                        <input type="text" name="name" class="form-control" value="${user.name}" required autocomplete="name">
+                        <input type="text" name="name" class="form-control" value="${escapeHtml(user.name)}" required autocomplete="name">
                       </div>
                       <div class="form-group">
                         <label>Email</label>
-                        <input type="email" name="email" class="form-control" value="${user.email}" required autocomplete="email">
+                        <input type="email" name="email" class="form-control" value="${escapeHtml(user.email)}" required autocomplete="email">
                       </div>
                       <div class="form-group">
                         <label>Role</label>
                         <select name="roleId" class="form-control" required>
-                          ${(AppState.roles || []).map(r => `<option value="${r.id}" ${String(r.id)===String(currentRoleId)?'selected':''}>${r.displayName || r.name}</option>`).join('')}
+                          ${(AppState.roles || []).map(r => `<option value="${r.id}" ${String(r.id)===String(currentRoleId)?'selected':''}>${escapeHtml(r.displayName || r.name)}</option>`).join('')}
                         </select>
                       </div>
                       <div class="checkbox-group">
@@ -16161,7 +16163,7 @@
                           <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">\u00d7</button>
                         </div>
                         <div class="modal-body">
-                          <p>Provide this temporary password to <strong>${user.name}</strong> and require them to change it on next login:</p>
+                          <p>Provide this temporary password to <strong>${escapeHtml(user.name)}</strong> and require them to change it on next login:</p>
                           <div class="form-group">
                             <input type="text" class="form-control" value="${temp}" readonly>
                           </div>
@@ -16419,11 +16421,11 @@
         function renderPermissionGrid(container, categories, selected=new Set()) {
             container.innerHTML = categories.map(cat => `
                 <div style="margin:10px 0;">
-                    <div style="font-weight:600; margin-bottom:6px;">${cat.category}</div>
+                    <div style="font-weight:600; margin-bottom:6px;">${escapeHtml(cat.category)}</div>
                     <div class="checkbox-group" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap:6px;">
                         ${cat.items.map(it => {
                             const checked = selected.has(it.key) ? 'checked' : '';
-                            return `<label><input type="checkbox" name="perm" value="${it.key}" ${checked}> ${it.label}</label>`;
+                            return `<label><input type="checkbox" name="perm" value="${escapeHtml(it.key)}" ${checked}> ${escapeHtml(it.label)}</label>`;
                         }).join('')}
                     </div>
                 </div>
@@ -16522,11 +16524,11 @@
                     <form onsubmit="submitEditRole(event, '${roleId}')">
                       <div class="form-group">
                         <label>Display Name</label>
-                        <input type="text" name="displayName" class="form-control" value="${role.displayName || role.name}" required>
+                        <input type="text" name="displayName" class="form-control" value="${escapeHtml(role.displayName || role.name)}" required>
                       </div>
                       <div class="form-group">
                         <label>Description</label>
-                        <textarea name="description" class="form-control" rows="3">${role.description || ''}</textarea>
+                        <textarea name="description" class="form-control" rows="3">${escapeHtml(role.description || '')}</textarea>
                       </div>
                       <div class="form-group">
                         <label>Priority</label>
@@ -16791,7 +16793,7 @@
                 });
             }
 
-            const escapeHtml = (s) => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+            const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
             const fmt = (v) => escapeHtml(typeof v === 'object' ? JSON.stringify(v) : v);
 
             const rows = filteredLog.map(entry => {
@@ -17695,9 +17697,10 @@
 
         // ==================== GLOBAL UTILITY FUNCTIONS ====================
         
-        // Global escapeHtml function for security
+        // Global escapeHtml function for security (ASRB 5.1.1)
         function escapeHtml(text) {
-            if (typeof text !== 'string') return text;
+            if (text === null || text === undefined) return '';
+            if (typeof text !== 'string') text = String(text);
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
@@ -18560,9 +18563,9 @@
                             <h3 style="margin: 0 0 1rem 0; color: var(--gray-800);">🧠 Recent Insights</h3>
                             ${dashboard.recentInsights.map(insight => `
                                 <div style="margin-bottom: 1rem; padding: 1rem; background: var(--gray-50); border-radius: 6px;">
-                                    <div style="font-weight: 500; margin-bottom: 0.5rem;">${insight.title}</div>
+                                    <div style="font-weight: 500; margin-bottom: 0.5rem;">${escapeHtml(insight.title)}</div>
                                     <div style="font-size: 0.9rem; color: var(--gray-600);">
-                                        ${Array.isArray(insight.content) ? insight.content.join(', ') : insight.content}
+                                        ${escapeHtml(Array.isArray(insight.content) ? insight.content.join(', ') : insight.content)}
                                     </div>
                                 </div>
                             `).join('')}

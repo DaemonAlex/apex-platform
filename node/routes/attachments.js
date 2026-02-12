@@ -1,13 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
+const logger = require('../utils/logger');
 const path = require('path');
 const fs = require('fs').promises;
 const jwt = require('jsonwebtoken');
 
 // Validate JWT_SECRET is set
 if (!process.env.JWT_SECRET) {
-    console.error('❌ CRITICAL: JWT_SECRET environment variable is not set in attachments.js');
+    logger.error('❌ CRITICAL: JWT_SECRET environment variable is not set in attachments.js');
     process.exit(1);
 }
 
@@ -97,7 +98,7 @@ router.post('/:taskId', authenticateToken, upload.array('files', 10), async (req
         });
 
     } catch (error) {
-        console.error('Upload error:', error);
+        logger.error('Upload error:', error);
         res.status(500).json({
             error: 'File upload failed',
             message: error.message
@@ -135,7 +136,7 @@ router.get('/:taskId', authenticateToken, async (req, res) => {
         }
 
     } catch (error) {
-        console.error('List attachments error:', error);
+        logger.error('List attachments error:', error);
         res.status(500).json({ error: 'Failed to list attachments' });
     }
 });
@@ -160,7 +161,7 @@ router.get('/:taskId/:filename', authenticateToken, async (req, res) => {
         }
 
     } catch (error) {
-        console.error('Download error:', error);
+        logger.error('Download error:', error);
         res.status(500).json({ error: 'File download failed' });
     }
 });
@@ -191,7 +192,7 @@ router.delete('/:taskId/:filename', authenticateToken, async (req, res) => {
         }
 
     } catch (error) {
-        console.error('Delete error:', error);
+        logger.error('Delete error:', error);
         res.status(500).json({ error: 'File deletion failed' });
     }
 });
