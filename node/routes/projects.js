@@ -1,5 +1,5 @@
 const express = require('express');
-const { sql, poolPromise } = require('../db');
+const { pool } = require('../db');
 const logger = require('../utils/logger');
 const { auditLog } = require('../middleware/audit');
 const { validate, body, param } = require('../middleware/validate');
@@ -72,84 +72,57 @@ function removeTaskFromProject(tasks, taskId) {
 
 // Initialize Projects table
 async function initializeProjectsTable() {
-  const pool = await poolPromise;
-
-  await pool.request().query(`
-    IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Projects' AND xtype='U')
-    BEGIN
-      CREATE TABLE Projects (
-        id NVARCHAR(50) PRIMARY KEY,
-        name NVARCHAR(255) NOT NULL,
-        client NVARCHAR(255),
-        type NVARCHAR(100),
-        status NVARCHAR(50) DEFAULT 'planning',
-        budget DECIMAL(12,2) DEFAULT 0,
-        actualBudget DECIMAL(12,2) DEFAULT 0,
-        startDate DATETIME2,
-        endDate DATETIME2,
-        description NVARCHAR(MAX),
-        tasks NVARCHAR(MAX), -- JSON string
-        requestorInfo NVARCHAR(500),
-        siteLocation NVARCHAR(500),
-        businessLine NVARCHAR(255),
-        progress INT DEFAULT 0,
-        priority NVARCHAR(50),
-        requestDate DATETIME2,
-        dueDate DATETIME2,
-        estimatedBudget DECIMAL(12,2) DEFAULT 0,
-        created_at DATETIME2 DEFAULT GETDATE(),
-        updated_at DATETIME2 DEFAULT GETDATE()
-      );
-    END
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS Projects (
+      id VARCHAR(50) PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      client VARCHAR(255),
+      type VARCHAR(100),
+      status VARCHAR(50) DEFAULT 'planning',
+      budget NUMERIC(12,2) DEFAULT 0,
+      actualBudget NUMERIC(12,2) DEFAULT 0,
+      startDate TIMESTAMPTZ,
+      endDate TIMESTAMPTZ,
+      description TEXT,
+      tasks JSONB, -- native JSON support
+      requestorInfo VARCHAR(500),
+      siteLocation VARCHAR(500),
+      businessLine VARCHAR(255),
+      progress INT DEFAULT 0,
+      priority VARCHAR(50),
+      requestDate TIMESTAMPTZ,
+      dueDate TIMESTAMPTZ,
+      estimatedBudget NUMERIC(12,2) DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
   `);
 
   // Add missing columns if they don't exist (migration)
-  // NOTE: These are hardcoded trusted values, but we validate them for defense in depth
   const columns = [
-    'requestorInfo NVARCHAR(500)',
-    'siteLocation NVARCHAR(500)',
-    'businessLine NVARCHAR(255)',
-    'progress INT DEFAULT 0',
-    'requestDate DATETIME2',
-    'dueDate DATETIME2',
-    'estimatedBudget DECIMAL(12,2) DEFAULT 0',
-    'costCenter NVARCHAR(255)',
-    'purchaseOrder NVARCHAR(255)',
-    'parent_project_id NVARCHAR(50)'
+    { name: 'requestorInfo', def: 'VARCHAR(500)' },
+    { name: 'siteLocation', def: 'VARCHAR(500)' },
+    { name: 'businessLine', def: 'VARCHAR(255)' },
+    { name: 'progress', def: 'INT DEFAULT 0' },
+    { name: 'requestDate', def: 'TIMESTAMPTZ' },
+    { name: 'dueDate', def: 'TIMESTAMPTZ' },
+    { name: 'estimatedBudget', def: 'NUMERIC(12,2) DEFAULT 0' },
+    { name: 'costCenter', def: 'VARCHAR(255)' },
+    { name: 'purchaseOrder', def: 'VARCHAR(255)' },
+    { name: 'parent_project_id', def: 'VARCHAR(50)' }
   ];
 
   for (const column of columns) {
-    const columnName = column.split(' ')[0];
-
     // SECURITY: Validate column name contains only safe characters (defense in depth)
-    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(columnName)) {
-      logger.error('SECURITY: Invalid column name detected', { columnName });
-      continue;
-    }
-
-    // Validate full column definition doesn't contain suspicious patterns
-    if (/;|--|\/\*|\*\/|xp_|sp_|exec|execute/i.test(column)) {
-      logger.error('SECURITY: Suspicious pattern in column definition', { column });
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(column.name)) {
+      logger.error('SECURITY: Invalid column name detected', { columnName: column.name });
       continue;
     }
 
     try {
-      // Use parameterized query for column name check
-      const checkResult = await pool.request()
-        .input('columnName', sql.NVarChar, columnName)
-        .query(`
-          SELECT COUNT(*) as exists
-          FROM sys.columns
-          WHERE object_id = OBJECT_ID('Projects') AND name = @columnName
-        `);
-
-      if (checkResult.recordset[0].exists === 0) {
-        // Column doesn't exist, add it (column definition is validated above)
-        await pool.request().query(`ALTER TABLE Projects ADD ${column}`);
-        logger.info('Added column to Projects', { columnName });
-      }
+      await pool.query(`ALTER TABLE Projects ADD COLUMN IF NOT EXISTS ${column.name} ${column.def}`);
     } catch (err) {
-      logger.warn('Column migration warning', { columnName, error: err.message });
+      logger.warn('Column migration warning', { columnName: column.name, error: err.message });
     }
   }
 
@@ -158,16 +131,14 @@ async function initializeProjectsTable() {
 
 // Get all projects
 router.get('/', async (req, res) => {
-  let pool;
   try {
     await initializeProjectsTable();
 
-    pool = await poolPromise;
-    const result = await pool.request().query('SELECT * FROM Projects WHERE id LIKE \'WTB_%\' ORDER BY created_at DESC');
+    const result = await pool.query("SELECT * FROM Projects WHERE id LIKE 'WTB_%' ORDER BY created_at DESC");
 
-    const projects = result.recordset.map(project => ({
+    const projects = result.rows.map(project => ({
       ...project,
-      tasks: project.tasks ? JSON.parse(project.tasks) : []
+      tasks: project.tasks ? (typeof project.tasks === 'string' ? JSON.parse(project.tasks) : project.tasks) : []
     }));
 
     res.json({ projects });
@@ -180,17 +151,14 @@ router.get('/', async (req, res) => {
 // Get single project
 router.get('/:id', async (req, res) => {
   try {
-    const pool = await poolPromise;
-    const result = await pool.request()
-      .input('id', sql.NVarChar, req.params.id)
-      .query('SELECT * FROM Projects WHERE id = @id');
+    const result = await pool.query('SELECT * FROM Projects WHERE id = $1', [req.params.id]);
 
-    if (result.recordset.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const project = result.recordset[0];
-    project.tasks = project.tasks ? JSON.parse(project.tasks) : [];
+    const project = result.rows[0];
+    project.tasks = project.tasks ? (typeof project.tasks === 'string' ? JSON.parse(project.tasks) : project.tasks) : [];
 
     res.json(project);
     // pool kept open
@@ -203,14 +171,14 @@ router.get('/:id', async (req, res) => {
 // Get child projects of a parent project
 router.get('/:id/children', async (req, res) => {
   try {
-    const pool = await poolPromise;
-    const result = await pool.request()
-      .input('parent_id', sql.NVarChar, req.params.id)
-      .query('SELECT * FROM Projects WHERE parent_project_id = @parent_id AND id LIKE \'WTB_%\' ORDER BY created_at DESC');
+    const result = await pool.query(
+      "SELECT * FROM Projects WHERE parent_project_id = $1 AND id LIKE 'WTB_%' ORDER BY created_at DESC",
+      [req.params.id]
+    );
 
-    const projects = result.recordset.map(project => ({
+    const projects = result.rows.map(project => ({
       ...project,
-      tasks: project.tasks ? JSON.parse(project.tasks) : []
+      tasks: project.tasks ? (typeof project.tasks === 'string' ? JSON.parse(project.tasks) : project.tasks) : []
     }));
 
     res.json({ projects });
@@ -233,43 +201,28 @@ router.post('/',
             requestorInfo, siteLocation, businessLine, progress, priority, requestDate, dueDate, estimatedBudget,
             costCenter, purchaseOrder, parent_project_id } = req.body;
 
-    const pool = await poolPromise;
+    const result = await pool.query(`
+      INSERT INTO Projects (id, name, client, type, status, budget, actualBudget, startDate, endDate, description, tasks,
+                           requestorInfo, siteLocation, businessLine, progress, priority, requestDate, dueDate, estimatedBudget,
+                           costCenter, purchaseOrder, parent_project_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+              $12, $13, $14, $15, $16, $17, $18, $19,
+              $20, $21, $22)
+      RETURNING *
+    `, [
+      id, name, client || '', type || '', status || 'planning',
+      budget || 0, actualBudget || 0,
+      startDate ? new Date(startDate) : null, endDate ? new Date(endDate) : null,
+      description || '', JSON.stringify(tasks || []),
+      requestorInfo || '', siteLocation || '', businessLine || '',
+      progress || 0, priority || '',
+      requestDate ? new Date(requestDate) : null, dueDate ? new Date(dueDate) : null,
+      estimatedBudget || 0,
+      costCenter || '', purchaseOrder || '', parent_project_id || null
+    ]);
 
-    const result = await pool.request()
-      .input('id', sql.NVarChar, id)
-      .input('name', sql.NVarChar, name)
-      .input('client', sql.NVarChar, client || '')
-      .input('type', sql.NVarChar, type || '')
-      .input('status', sql.NVarChar, status || 'planning')
-      .input('budget', sql.Decimal(12,2), budget || 0)
-      .input('actualBudget', sql.Decimal(12,2), actualBudget || 0)
-      .input('startDate', sql.DateTime2, startDate ? new Date(startDate) : null)
-      .input('endDate', sql.DateTime2, endDate ? new Date(endDate) : null)
-      .input('description', sql.NVarChar, description || '')
-      .input('tasks', sql.NVarChar, JSON.stringify(tasks || []))
-      .input('requestorInfo', sql.NVarChar, requestorInfo || '')
-      .input('siteLocation', sql.NVarChar, siteLocation || '')
-      .input('businessLine', sql.NVarChar, businessLine || '')
-      .input('progress', sql.Int, progress || 0)
-      .input('priority', sql.NVarChar, priority || '')
-      .input('requestDate', sql.DateTime2, requestDate ? new Date(requestDate) : null)
-      .input('dueDate', sql.DateTime2, dueDate ? new Date(dueDate) : null)
-      .input('estimatedBudget', sql.Decimal(12,2), estimatedBudget || 0)
-      .input('costCenter', sql.NVarChar, costCenter || '')
-      .input('purchaseOrder', sql.NVarChar, purchaseOrder || '')
-      .input('parent_project_id', sql.NVarChar, parent_project_id || null)
-      .query(`
-        INSERT INTO Projects (id, name, client, type, status, budget, actualBudget, startDate, endDate, description, tasks,
-                             requestorInfo, siteLocation, businessLine, progress, priority, requestDate, dueDate, estimatedBudget,
-                             costCenter, purchaseOrder, parent_project_id)
-        OUTPUT INSERTED.*
-        VALUES (@id, @name, @client, @type, @status, @budget, @actualBudget, @startDate, @endDate, @description, @tasks,
-                @requestorInfo, @siteLocation, @businessLine, @progress, @priority, @requestDate, @dueDate, @estimatedBudget,
-                @costCenter, @purchaseOrder, @parent_project_id)
-      `);
-
-    const project = result.recordset[0];
-    project.tasks = JSON.parse(project.tasks);
+    const project = result.rows[0];
+    project.tasks = typeof project.tasks === 'string' ? JSON.parse(project.tasks) : project.tasks;
 
     // If this is a location (has parent_project_id), update parent rollups
     if (parent_project_id) {
@@ -295,51 +248,37 @@ router.put('/:id',
             requestorInfo, siteLocation, businessLine, progress, priority, requestDate, dueDate,
             estimatedBudget, costCenter, purchaseOrder, parent_project_id } = req.body;
 
-    const pool = await poolPromise;
+    const result = await pool.query(`
+      UPDATE Projects
+      SET name = $1, client = $2, type = $3, status = $4,
+          budget = $5, actualBudget = $6, startDate = $7,
+          endDate = $8, description = $9, tasks = $10,
+          requestorInfo = $11, siteLocation = $12, businessLine = $13,
+          progress = $14, priority = $15, requestDate = $16, dueDate = $17,
+          estimatedBudget = $18, costCenter = $19, purchaseOrder = $20,
+          parent_project_id = $21,
+          updated_at = NOW()
+      WHERE id = $22
+      RETURNING *
+    `, [
+      name, client || '', type || '', status || 'planning',
+      budget || 0, actualBudget || 0,
+      startDate ? new Date(startDate) : null, endDate ? new Date(endDate) : null,
+      description || '', JSON.stringify(tasks || []),
+      requestorInfo || '', siteLocation || '', businessLine || '',
+      progress || 0, priority || '',
+      requestDate ? new Date(requestDate) : null, dueDate ? new Date(dueDate) : null,
+      estimatedBudget || 0, costCenter || '', purchaseOrder || '',
+      parent_project_id || null,
+      req.params.id
+    ]);
 
-    const result = await pool.request()
-      .input('id', sql.NVarChar, req.params.id)
-      .input('name', sql.NVarChar, name)
-      .input('client', sql.NVarChar, client || '')
-      .input('type', sql.NVarChar, type || '')
-      .input('status', sql.NVarChar, status || 'planning')
-      .input('budget', sql.Decimal(12,2), budget || 0)
-      .input('actualBudget', sql.Decimal(12,2), actualBudget || 0)
-      .input('startDate', sql.DateTime2, startDate ? new Date(startDate) : null)
-      .input('endDate', sql.DateTime2, endDate ? new Date(endDate) : null)
-      .input('description', sql.NVarChar, description || '')
-      .input('tasks', sql.NVarChar, JSON.stringify(tasks || []))
-      .input('requestorInfo', sql.NVarChar, requestorInfo || '')
-      .input('siteLocation', sql.NVarChar, siteLocation || '')
-      .input('businessLine', sql.NVarChar, businessLine || '')
-      .input('progress', sql.Int, progress || 0)
-      .input('priority', sql.NVarChar, priority || '')
-      .input('requestDate', sql.DateTime2, requestDate ? new Date(requestDate) : null)
-      .input('dueDate', sql.DateTime2, dueDate ? new Date(dueDate) : null)
-      .input('estimatedBudget', sql.Decimal(12,2), estimatedBudget || 0)
-      .input('costCenter', sql.NVarChar, costCenter || '')
-      .input('purchaseOrder', sql.NVarChar, purchaseOrder || '')
-      .input('parent_project_id', sql.NVarChar, parent_project_id || null)
-      .query(`
-        UPDATE Projects
-        SET name = @name, client = @client, type = @type, status = @status,
-            budget = @budget, actualBudget = @actualBudget, startDate = @startDate,
-            endDate = @endDate, description = @description, tasks = @tasks,
-            requestorInfo = @requestorInfo, siteLocation = @siteLocation, businessLine = @businessLine,
-            progress = @progress, priority = @priority, requestDate = @requestDate, dueDate = @dueDate,
-            estimatedBudget = @estimatedBudget, costCenter = @costCenter, purchaseOrder = @purchaseOrder,
-            parent_project_id = @parent_project_id,
-            updated_at = GETDATE()
-        OUTPUT INSERTED.*
-        WHERE id = @id
-      `);
-
-    if (result.recordset.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const project = result.recordset[0];
-    project.tasks = JSON.parse(project.tasks);
+    const project = result.rows[0];
+    project.tasks = typeof project.tasks === 'string' ? JSON.parse(project.tasks) : project.tasks;
 
     // If this is a location (has parent_project_id), update parent rollups
     if (parent_project_id) {
@@ -359,25 +298,19 @@ router.delete('/:id',
   auditLog('Project deleted', 'project', 'warning'),
   async (req, res) => {
   try {
-    const pool = await poolPromise;
-
     // First get the project to check if it has a parent
-    const getResult = await pool.request()
-      .input('id', sql.NVarChar, req.params.id)
-      .query('SELECT parent_project_id FROM Projects WHERE id = @id');
+    const getResult = await pool.query('SELECT parent_project_id FROM Projects WHERE id = $1', [req.params.id]);
 
-    if (getResult.recordset.length === 0) {
+    if (getResult.rows.length === 0) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const parentProjectId = getResult.recordset[0].parent_project_id;
+    const parentProjectId = getResult.rows[0].parent_project_id;
 
     // Delete the project
-    const result = await pool.request()
-      .input('id', sql.NVarChar, req.params.id)
-      .query('DELETE FROM Projects WHERE id = @id');
+    const result = await pool.query('DELETE FROM Projects WHERE id = $1', [req.params.id]);
 
-    if (result.rowsAffected[0] === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
@@ -398,25 +331,20 @@ router.delete('/:id',
 
 // Add time entry to project
 router.post('/:projectId/time-entry', async (req, res) => {
-  let pool;
   try {
     const { projectId } = req.params;
     const { taskId, employee, hours, date, description } = req.body;
 
-    pool = await poolPromise;
-
     // Get current project
-    const result = await pool.request()
-      .input('id', sql.NVarChar, projectId)
-      .query('SELECT * FROM Projects WHERE id = @id');
+    const result = await pool.query('SELECT * FROM Projects WHERE id = $1', [projectId]);
 
-    if (result.recordset.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const project = result.recordset[0];
-    let timeEntries = project.timeEntries ? JSON.parse(project.timeEntries) : [];
-    let tasks = project.tasks ? JSON.parse(project.tasks) : [];
+    const project = result.rows[0];
+    let timeEntries = project.timeEntries ? (typeof project.timeEntries === 'string' ? JSON.parse(project.timeEntries) : project.timeEntries) : [];
+    let tasks = project.tasks ? (typeof project.tasks === 'string' ? JSON.parse(project.tasks) : project.tasks) : [];
 
     // Add new time entry
     const newEntry = {
@@ -454,19 +382,14 @@ router.post('/:projectId/time-entry', async (req, res) => {
       .reduce((sum, task) => sum + (task.actualHours || 0), 0);
 
     // Update project
-    await pool.request()
-      .input('id', sql.NVarChar, projectId)
-      .input('tasks', sql.NVarChar, JSON.stringify(tasks))
-      .input('timeEntries', sql.NVarChar, JSON.stringify(timeEntries))
-      .input('actualHours', sql.Decimal(10,2), totalActualHours)
-      .query(`
-        UPDATE Projects
-        SET tasks = @tasks,
-            timeEntries = @timeEntries,
-            actualHours = @actualHours,
-            updated_at = GETDATE()
-        WHERE id = @id
-      `);
+    await pool.query(`
+      UPDATE Projects
+      SET tasks = $1,
+          timeEntries = $2,
+          actualHours = $3,
+          updated_at = NOW()
+      WHERE id = $4
+    `, [JSON.stringify(tasks), JSON.stringify(timeEntries), totalActualHours, projectId]);
 
     // If this is a location (has parent_project_id), update parent rollups
     if (project.parent_project_id) {
@@ -486,19 +409,15 @@ router.put('/:projectId/tasks/:taskId', async (req, res) => {
     const { projectId, taskId } = req.params;
     const taskUpdate = req.body;
 
-    const pool = await poolPromise;
-
     // Get current project
-    const projectResult = await pool.request()
-      .input('id', sql.NVarChar, projectId)
-      .query('SELECT * FROM Projects WHERE id = @id');
+    const projectResult = await pool.query('SELECT * FROM Projects WHERE id = $1', [projectId]);
 
-    if (projectResult.recordset.length === 0) {
+    if (projectResult.rows.length === 0) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const project = projectResult.recordset[0];
-    let tasks = project.tasks ? JSON.parse(project.tasks) : [];
+    const project = projectResult.rows[0];
+    let tasks = project.tasks ? (typeof project.tasks === 'string' ? JSON.parse(project.tasks) : project.tasks) : [];
 
     // Find and update the specific task (including subtasks)
     const found = findTaskInProject(tasks, taskId);
@@ -510,10 +429,7 @@ router.put('/:projectId/tasks/:taskId', async (req, res) => {
     Object.assign(found.task, taskUpdate, { updatedAt: new Date().toISOString() });
 
     // Save back to database
-    const updateResult = await pool.request()
-      .input('id', sql.NVarChar, projectId)
-      .input('tasks', sql.NVarChar, JSON.stringify(tasks))
-      .query('UPDATE Projects SET tasks = @tasks, updated_at = GETDATE() WHERE id = @id');
+    await pool.query('UPDATE Projects SET tasks = $1, updated_at = NOW() WHERE id = $2', [JSON.stringify(tasks), projectId]);
 
     // If this is a location (has parent_project_id), update parent rollups
     if (project.parent_project_id) {
@@ -538,19 +454,15 @@ router.post('/:projectId/tasks', async (req, res) => {
     const { projectId } = req.params;
     const newTask = req.body;
 
-    const pool = await poolPromise;
-
     // Get current project
-    const projectResult = await pool.request()
-      .input('id', sql.NVarChar, projectId)
-      .query('SELECT * FROM Projects WHERE id = @id');
+    const projectResult = await pool.query('SELECT * FROM Projects WHERE id = $1', [projectId]);
 
-    if (projectResult.recordset.length === 0) {
+    if (projectResult.rows.length === 0) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const project = projectResult.recordset[0];
-    let tasks = project.tasks ? JSON.parse(project.tasks) : [];
+    const project = projectResult.rows[0];
+    let tasks = project.tasks ? (typeof project.tasks === 'string' ? JSON.parse(project.tasks) : project.tasks) : [];
 
     // Add timestamp and ensure task has required fields
     const taskWithDefaults = {
@@ -564,10 +476,7 @@ router.post('/:projectId/tasks', async (req, res) => {
     tasks.push(taskWithDefaults);
 
     // Save back to database
-    const updateResult = await pool.request()
-      .input('id', sql.NVarChar, projectId)
-      .input('tasks', sql.NVarChar, JSON.stringify(tasks))
-      .query('UPDATE Projects SET tasks = @tasks, updated_at = GETDATE() WHERE id = @id');
+    await pool.query('UPDATE Projects SET tasks = $1, updated_at = NOW() WHERE id = $2', [JSON.stringify(tasks), projectId]);
 
     // If this is a location (has parent_project_id), update parent rollups
     if (project.parent_project_id) {
@@ -591,19 +500,15 @@ router.delete('/:projectId/tasks/:taskId', async (req, res) => {
   try {
     const { projectId, taskId } = req.params;
 
-    const pool = await poolPromise;
-
     // Get current project
-    const projectResult = await pool.request()
-      .input('id', sql.NVarChar, projectId)
-      .query('SELECT * FROM Projects WHERE id = @id');
+    const projectResult = await pool.query('SELECT * FROM Projects WHERE id = $1', [projectId]);
 
-    if (projectResult.recordset.length === 0) {
+    if (projectResult.rows.length === 0) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const project = projectResult.recordset[0];
-    let tasks = project.tasks ? JSON.parse(project.tasks) : [];
+    const project = projectResult.rows[0];
+    let tasks = project.tasks ? (typeof project.tasks === 'string' ? JSON.parse(project.tasks) : project.tasks) : [];
 
     // Remove the specific task (including subtasks)
     const removed = removeTaskFromProject(tasks, taskId);
@@ -612,10 +517,7 @@ router.delete('/:projectId/tasks/:taskId', async (req, res) => {
     }
 
     // Save back to database
-    const updateResult = await pool.request()
-      .input('id', sql.NVarChar, projectId)
-      .input('tasks', sql.NVarChar, JSON.stringify(tasks))
-      .query('UPDATE Projects SET tasks = @tasks, updated_at = GETDATE() WHERE id = @id');
+    await pool.query('UPDATE Projects SET tasks = $1, updated_at = NOW() WHERE id = $2', [JSON.stringify(tasks), projectId]);
 
     // If this is a location (has parent_project_id), update parent rollups
     if (project.parent_project_id) {
@@ -634,14 +536,10 @@ router.delete('/:projectId/tasks/:taskId', async (req, res) => {
 // Helper function to calculate and update parent project rollups
 async function updateParentProjectRollups(parentProjectId) {
   try {
-    const pool = await poolPromise;
-
     // Get all child projects (locations)
-    const childrenResult = await pool.request()
-      .input('parent_id', sql.NVarChar, parentProjectId)
-      .query('SELECT * FROM Projects WHERE parent_project_id = @parent_id');
+    const childrenResult = await pool.query('SELECT * FROM Projects WHERE parent_project_id = $1', [parentProjectId]);
 
-    const children = childrenResult.recordset;
+    const children = childrenResult.rows;
 
     if (children.length === 0) {
       // pool kept open
@@ -681,23 +579,16 @@ async function updateParentProjectRollups(parentProjectId) {
     const avgProgress = children.length > 0 ? Math.round(totalProgress / children.length) : 0;
 
     // Update parent project with rolled up values
-    await pool.request()
-      .input('id', sql.NVarChar, parentProjectId)
-      .input('estimatedBudget', sql.Decimal(12, 2), totalEstimatedBudget)
-      .input('actualBudget', sql.Decimal(12, 2), totalActualBudget)
-      .input('actualHours', sql.Decimal(10, 2), totalActualHours)
-      .input('progress', sql.Int, avgProgress)
-      .input('status', sql.NVarChar, worstStatus)
-      .query(`
-        UPDATE Projects
-        SET estimatedBudget = @estimatedBudget,
-            actualBudget = @actualBudget,
-            actualHours = @actualHours,
-            progress = @progress,
-            status = @status,
-            updated_at = GETDATE()
-        WHERE id = @id
-      `);
+    await pool.query(`
+      UPDATE Projects
+      SET estimatedBudget = $1,
+          actualBudget = $2,
+          actualHours = $3,
+          progress = $4,
+          status = $5,
+          updated_at = NOW()
+      WHERE id = $6
+    `, [totalEstimatedBudget, totalActualBudget, totalActualHours, avgProgress, worstStatus, parentProjectId]);
 
     // pool kept open
     logger.info('Updated rollups for parent project', { parentProjectId });

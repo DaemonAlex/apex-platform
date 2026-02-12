@@ -1,5 +1,5 @@
 const express = require('express');
-const { sql, poolPromise } = require('../db');
+const { pool } = require('../db');
 const logger = require('../utils/logger');
 const { auditLog } = require('../middleware/audit');
 const { validate, body, param } = require('../middleware/validate');
@@ -23,27 +23,22 @@ const validRoles = ['superadmin', 'admin', 'owner', 'project_manager', 'field_op
 // Get all users
 router.get('/', async (req, res) => {
   try {
-    const pool = await poolPromise;
-
     // First, ensure avatar column exists
     try {
-      await pool.request().query(`
-        IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Users' AND COLUMN_NAME = 'avatar')
-        BEGIN
-          ALTER TABLE Users ADD avatar NVARCHAR(MAX) NULL;
-        END
+      await pool.query(`
+        ALTER TABLE Users ADD COLUMN IF NOT EXISTS avatar TEXT
       `);
     } catch (e) {
       logger.warn('Avatar column may already exist', { error: e.message });
     }
 
-    const result = await pool.request().query(`
+    const result = await pool.query(`
       SELECT id, name, email, role, preferences, avatar, created_at, updated_at
       FROM Users
       ORDER BY created_at DESC
     `);
 
-    const users = result.recordset.map(user => {
+    const users = result.rows.map(user => {
       let preferences = {};
       try {
         preferences = user.preferences ? JSON.parse(user.preferences) : {};
@@ -98,36 +93,25 @@ router.put('/:id',
       return res.status(400).json({ error: 'Invalid role', validRoles });
     }
 
-    const pool = await poolPromise;
-
     // Check if user exists
-    const existingUser = await pool.request()
-      .input('id', sql.Int, userId)
-      .query('SELECT id FROM Users WHERE id = @id');
+    const existingUser = await pool.query('SELECT id FROM Users WHERE id = $1', [userId]);
 
-    if (existingUser.recordset.length === 0) {
+    if (existingUser.rows.length === 0) {
       // Connection pool kept open for reuse
       return res.status(404).json({ error: 'User not found' });
     }
 
     // Update user
-    const result = await pool.request()
-      .input('id', sql.Int, userId)
-      .input('name', sql.NVarChar, name)
-      .input('email', sql.NVarChar, email)
-      .input('role', sql.NVarChar, userRole)
-      .query(`
-        UPDATE Users
-        SET name = @name, email = @email, role = @role, updated_at = GETDATE()
-        WHERE id = @id
-      `);
+    await pool.query(`
+      UPDATE Users
+      SET name = $1, email = $2, role = $3, updated_at = NOW()
+      WHERE id = $4
+    `, [name, email, userRole, userId]);
 
     // Return updated user
-    const updatedUser = await pool.request()
-      .input('id', sql.Int, userId)
-      .query('SELECT id, name, email, role FROM Users WHERE id = @id');
+    const updatedUser = await pool.query('SELECT id, name, email, role FROM Users WHERE id = $1', [userId]);
 
-    const user = updatedUser.recordset[0];
+    const user = updatedUser.rows[0];
     const responseUser = {
       id: user.id,
       name: user.name,
@@ -170,19 +154,15 @@ router.put('/:id/password',
       });
     }
 
-    const pool = await poolPromise;
-
     // Get current user password hash
-    const userResult = await pool.request()
-      .input('id', sql.Int, userId)
-      .query('SELECT password FROM Users WHERE id = @id');
+    const userResult = await pool.query('SELECT password FROM Users WHERE id = $1', [userId]);
 
-    if (userResult.recordset.length === 0) {
+    if (userResult.rows.length === 0) {
       // Connection pool kept open for reuse
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const currentUser = userResult.recordset[0];
+    const currentUser = userResult.rows[0];
 
     // Verify current password
     const bcrypt = require('bcryptjs');
@@ -203,15 +183,11 @@ router.put('/:id/password',
     passwordExpiresAt.setDate(passwordExpiresAt.getDate() + 60);
 
     // Update password in database
-    await pool.request()
-      .input('id', sql.Int, userId)
-      .input('password', sql.NVarChar, newPasswordHash)
-      .input('passwordExpiresAt', sql.DateTime2, passwordExpiresAt)
-      .query(`
-        UPDATE Users
-        SET password = @password, password_changed_at = GETDATE(), password_expires_at = @passwordExpiresAt, force_password_change = 0, updated_at = GETDATE()
-        WHERE id = @id
-      `);
+    await pool.query(`
+      UPDATE Users
+      SET password = $1, password_changed_at = NOW(), password_expires_at = $2, force_password_change = FALSE, updated_at = NOW()
+      WHERE id = $3
+    `, [newPasswordHash, passwordExpiresAt, userId]);
 
     logger.info('Password changed successfully', { userId });
 
@@ -230,14 +206,10 @@ router.put('/:id/preferences', async (req, res) => {
     const userId = req.params.id;
     const preferences = req.body;
 
-    const pool = await poolPromise;
-
     // Check if user exists
-    const existingUser = await pool.request()
-      .input('id', sql.Int, userId)
-      .query('SELECT id FROM Users WHERE id = @id');
+    const existingUser = await pool.query('SELECT id FROM Users WHERE id = $1', [userId]);
 
-    if (existingUser.recordset.length === 0) {
+    if (existingUser.rows.length === 0) {
       // Connection pool kept open for reuse
       return res.status(404).json({ error: 'User not found' });
     }
@@ -245,14 +217,11 @@ router.put('/:id/preferences', async (req, res) => {
     // Update preferences (stored as JSON string)
     const preferencesJson = JSON.stringify(preferences);
 
-    await pool.request()
-      .input('id', sql.Int, userId)
-      .input('preferences', sql.NVarChar, preferencesJson)
-      .query(`
-        UPDATE Users
-        SET preferences = @preferences, updated_at = GETDATE()
-        WHERE id = @id
-      `);
+    await pool.query(`
+      UPDATE Users
+      SET preferences = $1, updated_at = NOW()
+      WHERE id = $2
+    `, [preferencesJson, userId]);
 
     // Connection pool kept open for reuse
     res.json({ message: 'Preferences updated successfully', preferences });
@@ -278,27 +247,20 @@ router.put('/:id/avatar', async (req, res) => {
       return res.status(400).json({ error: 'Avatar must be a valid base64 image' });
     }
 
-    const pool = await poolPromise;
-
     // Check if user exists
-    const existingUser = await pool.request()
-      .input('id', sql.Int, userId)
-      .query('SELECT id FROM Users WHERE id = @id');
+    const existingUser = await pool.query('SELECT id FROM Users WHERE id = $1', [userId]);
 
-    if (existingUser.recordset.length === 0) {
+    if (existingUser.rows.length === 0) {
       // Connection pool kept open for reuse
       return res.status(404).json({ error: 'User not found' });
     }
 
     // Update avatar
-    await pool.request()
-      .input('id', sql.Int, userId)
-      .input('avatar', sql.NVarChar(sql.MAX), avatar)
-      .query(`
-        UPDATE Users
-        SET avatar = @avatar, updated_at = GETDATE()
-        WHERE id = @id
-      `);
+    await pool.query(`
+      UPDATE Users
+      SET avatar = $1, updated_at = NOW()
+      WHERE id = $2
+    `, [avatar, userId]);
 
     // Connection pool kept open for reuse
     res.json({ message: 'Avatar updated successfully' });
@@ -314,26 +276,20 @@ router.delete('/:id/avatar', async (req, res) => {
   try {
     const userId = req.params.id;
 
-    const pool = await poolPromise;
-
     // Check if user exists
-    const existingUser = await pool.request()
-      .input('id', sql.Int, userId)
-      .query('SELECT id FROM Users WHERE id = @id');
+    const existingUser = await pool.query('SELECT id FROM Users WHERE id = $1', [userId]);
 
-    if (existingUser.recordset.length === 0) {
+    if (existingUser.rows.length === 0) {
       // Connection pool kept open for reuse
       return res.status(404).json({ error: 'User not found' });
     }
 
     // Remove avatar
-    await pool.request()
-      .input('id', sql.Int, userId)
-      .query(`
-        UPDATE Users
-        SET avatar = NULL, updated_at = GETDATE()
-        WHERE id = @id
-      `);
+    await pool.query(`
+      UPDATE Users
+      SET avatar = NULL, updated_at = NOW()
+      WHERE id = $1
+    `, [userId]);
 
     // Connection pool kept open for reuse
     res.json({ message: 'Avatar removed successfully' });
@@ -366,14 +322,10 @@ router.post('/',
       });
     }
 
-    const pool = await poolPromise;
-
     // Check if user already exists
-    const existingUser = await pool.request()
-      .input('email', sql.NVarChar, email)
-      .query('SELECT id FROM users WHERE email = @email');
+    const existingUser = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
 
-    if (existingUser.recordset.length > 0) {
+    if (existingUser.rows.length > 0) {
       // Connection pool kept open for reuse
       return res.status(409).json({ error: 'User with this email already exists' });
     }
@@ -383,21 +335,15 @@ router.post('/',
     const hashedPassword = await bcrypt.hash(password, 12);
 
     // Insert new user
-    const result = await pool.request()
-      .input('name', sql.NVarChar, name)
-      .input('email', sql.NVarChar, email)
-      .input('password', sql.NVarChar, hashedPassword)
-      .input('role', sql.NVarChar, role)
-      .input('passwordExpires', sql.DateTime, new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)) // 60 days
-      .query(`
-        INSERT INTO users (name, email, password, role, password_expires_at, created_at, updated_at)
-        OUTPUT INSERTED.id, INSERTED.name, INSERTED.email, INSERTED.role, INSERTED.created_at
-        VALUES (@name, @email, @password, @role, @passwordExpires, GETDATE(), GETDATE())
-      `);
+    const result = await pool.query(`
+      INSERT INTO users (name, email, password, role, password_expires_at, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+      RETURNING id, name, email, role, created_at
+    `, [name, email, hashedPassword, role, new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)]);
 
     // Connection pool kept open for reuse
 
-    const newUser = result.recordset[0];
+    const newUser = result.rows[0];
 
     logger.info('User created', { userId: newUser.id, email: newUser.email, role: newUser.role, createdBy: req.user?.email });
 
@@ -429,24 +375,18 @@ router.delete('/:id',
   try {
     const userId = req.params.id;
 
-    const pool = await poolPromise;
-
     // Check if user exists
-    const existingUser = await pool.request()
-      .input('id', sql.Int, userId)
-      .query('SELECT id, email FROM users WHERE id = @id');
+    const existingUser = await pool.query('SELECT id, email FROM users WHERE id = $1', [userId]);
 
-    if (existingUser.recordset.length === 0) {
+    if (existingUser.rows.length === 0) {
       // Connection pool kept open for reuse
       return res.status(404).json({ error: 'User not found' });
     }
 
     // Delete user
-    await pool.request()
-      .input('id', sql.Int, userId)
-      .query('DELETE FROM users WHERE id = @id');
+    await pool.query('DELETE FROM users WHERE id = $1', [userId]);
 
-    logger.info('User deleted', { userId, deletedEmail: existingUser.recordset[0].email, deletedBy: req.user?.email });
+    logger.info('User deleted', { userId, deletedEmail: existingUser.rows[0].email, deletedBy: req.user?.email });
 
     // Connection pool kept open for reuse
     res.json({ message: 'User deleted successfully' });
@@ -467,14 +407,10 @@ router.post('/:id/reset-password',
   try {
     const userId = req.params.id;
 
-    const pool = await poolPromise;
-
     // Check if user exists
-    const existingUser = await pool.request()
-      .input('id', sql.Int, userId)
-      .query('SELECT id, email FROM users WHERE id = @id');
+    const existingUser = await pool.query('SELECT id, email FROM users WHERE id = $1', [userId]);
 
-    if (existingUser.recordset.length === 0) {
+    if (existingUser.rows.length === 0) {
       // Connection pool kept open for reuse
       return res.status(404).json({ error: 'User not found' });
     }
@@ -485,21 +421,17 @@ router.post('/:id/reset-password',
     const hashedPassword = await bcrypt.hash(tempPassword, 12);
 
     // Update user password
-    await pool.request()
-      .input('id', sql.Int, userId)
-      .input('password', sql.NVarChar, hashedPassword)
-      .input('passwordExpires', sql.DateTime, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)) // 7 days
-      .query(`
-        UPDATE users
-        SET password = @password,
-            password_expires_at = @passwordExpires,
-            force_password_change = 1,
-            password_changed_at = GETDATE(),
-            updated_at = GETDATE()
-        WHERE id = @id
-      `);
+    await pool.query(`
+      UPDATE users
+      SET password = $1,
+          password_expires_at = $2,
+          force_password_change = TRUE,
+          password_changed_at = NOW(),
+          updated_at = NOW()
+      WHERE id = $3
+    `, [hashedPassword, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), userId]);
 
-    logger.info('Admin password reset', { userId, targetEmail: existingUser.recordset[0].email, resetBy: req.user?.email });
+    logger.info('Admin password reset', { userId, targetEmail: existingUser.rows[0].email, resetBy: req.user?.email });
 
     // Connection pool kept open for reuse
     res.json({

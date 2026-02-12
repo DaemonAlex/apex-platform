@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { sql, poolPromise } = require('../db');
+const { pool } = require('../db');
 const logger = require('../utils/logger');
 const { auditLog } = require('../middleware/audit');
 const { validate, body, isValidEmail } = require('../middleware/validate');
@@ -63,79 +63,56 @@ router.post('/login',
   try {
     const { email, password } = req.body;
 
-    // Connect to database using centralized pool
-    const pool = await poolPromise;
-
     // Check if Users table exists, create if not
-    const tableCheck = await pool.request().query(`
-      IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Users' AND xtype='U')
-      BEGIN
-        CREATE TABLE Users (
-          id INT IDENTITY(1,1) PRIMARY KEY,
-          name NVARCHAR(255) NOT NULL,
-          email NVARCHAR(255) UNIQUE NOT NULL,
-          password NVARCHAR(255) NOT NULL,
-          role NVARCHAR(50) DEFAULT 'auditor',
-          preferences NVARCHAR(MAX),
-          created_at DATETIME2 DEFAULT GETDATE(),
-          updated_at DATETIME2 DEFAULT GETDATE()
-        );
-      END
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS Users (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password VARCHAR(255) NOT NULL,
+        role VARCHAR(50) DEFAULT 'auditor',
+        preferences TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
     `);
 
     // Add preferences column if it doesn't exist (migration)
-    await pool.request().query(`
-      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Users' AND COLUMN_NAME = 'preferences')
-      BEGIN
-        ALTER TABLE Users ADD preferences NVARCHAR(MAX);
-      END
+    await pool.query(`
+      ALTER TABLE Users ADD COLUMN IF NOT EXISTS preferences TEXT
     `);
 
     // Add password expiration tracking columns
-    await pool.request().query(`
-      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Users' AND COLUMN_NAME = 'password_changed_at')
-      BEGIN
-        ALTER TABLE Users ADD password_changed_at DATETIME2 DEFAULT GETDATE();
-      END
+    await pool.query(`
+      ALTER TABLE Users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ DEFAULT NOW()
     `);
 
-    await pool.request().query(`
-      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Users' AND COLUMN_NAME = 'password_expires_at')
-      BEGIN
-        ALTER TABLE Users ADD password_expires_at DATETIME2;
-      END
+    await pool.query(`
+      ALTER TABLE Users ADD COLUMN IF NOT EXISTS password_expires_at TIMESTAMPTZ
     `);
 
-    await pool.request().query(`
-      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Users' AND COLUMN_NAME = 'force_password_change')
-      BEGIN
-        ALTER TABLE Users ADD force_password_change BIT DEFAULT 0;
-      END
+    await pool.query(`
+      ALTER TABLE Users ADD COLUMN IF NOT EXISTS force_password_change BOOLEAN DEFAULT FALSE
     `);
 
     // Create password reset tokens table
-    await pool.request().query(`
-      IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='PasswordResetTokens' AND xtype='U')
-      BEGIN
-        CREATE TABLE PasswordResetTokens (
-          id INT IDENTITY(1,1) PRIMARY KEY,
-          user_id INT NOT NULL,
-          token NVARCHAR(255) NOT NULL UNIQUE,
-          expires_at DATETIME2 NOT NULL,
-          used BIT DEFAULT 0,
-          created_at DATETIME2 DEFAULT GETDATE(),
-          FOREIGN KEY (user_id) REFERENCES Users(id) ON DELETE CASCADE
-        );
-      END
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS PasswordResetTokens (
+        id SERIAL PRIMARY KEY,
+        user_id INT NOT NULL,
+        token VARCHAR(255) NOT NULL UNIQUE,
+        expires_at TIMESTAMPTZ NOT NULL,
+        used BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        FOREIGN KEY (user_id) REFERENCES Users(id) ON DELETE CASCADE
+      )
     `);
 
 
     // Find user by email
-    const result = await pool.request()
-      .input('email', sql.NVarChar, email)
-      .query('SELECT * FROM Users WHERE email = @email');
+    const result = await pool.query('SELECT * FROM Users WHERE email = $1', [email]);
 
-    const user = result.recordset[0];
+    const user = result.rows[0];
 
     if (!user) {
       logger.security('Failed login - user not found', { email, ip: req.ip });
@@ -226,14 +203,10 @@ router.post('/register',
       });
     }
 
-    const pool = await poolPromise;
-
     // Check if user exists
-    const existingUser = await pool.request()
-      .input('email', sql.NVarChar, email)
-      .query('SELECT id FROM Users WHERE email = @email');
+    const existingUser = await pool.query('SELECT id FROM Users WHERE email = $1', [email]);
 
-    if (existingUser.recordset.length > 0) {
+    if (existingUser.rows.length > 0) {
       return res.status(409).json({ error: 'User already exists' });
     }
 
@@ -245,20 +218,13 @@ router.post('/register',
     passwordExpiresAt.setDate(passwordExpiresAt.getDate() + 60);
 
     // Create user
-    const result = await pool.request()
-      .input('name', sql.NVarChar, name)
-      .input('email', sql.NVarChar, email)
-      .input('password', sql.NVarChar, hashedPassword)
-      .input('role', sql.NVarChar, role)
-      .input('passwordChangedAt', sql.DateTime2, new Date())
-      .input('passwordExpiresAt', sql.DateTime2, passwordExpiresAt)
-      .query(`
-        INSERT INTO Users (name, email, password, role, password_changed_at, password_expires_at)
-        OUTPUT INSERTED.*
-        VALUES (@name, @email, @password, @role, @passwordChangedAt, @passwordExpiresAt)
-      `);
+    const result = await pool.query(`
+      INSERT INTO Users (name, email, password, role, password_changed_at, password_expires_at)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING *
+    `, [name, email, hashedPassword, role, new Date(), passwordExpiresAt]);
 
-    const newUser = result.recordset[0];
+    const newUser = result.rows[0];
 
     logger.info('User registered', { email: newUser.email, userId: newUser.id, role: newUser.role });
 
@@ -289,32 +255,26 @@ router.post('/forgot-password',
   try {
     const { email } = req.body;
 
-    const pool = await poolPromise;
-
     // Check if user exists
-    const userResult = await pool.request()
-      .input('email', sql.NVarChar, email.toLowerCase())
-      .query('SELECT id, name FROM Users WHERE LOWER(email) = @email');
+    const userResult = await pool.query('SELECT id, name FROM Users WHERE LOWER(email) = $1', [email.toLowerCase()]);
 
-    if (userResult.recordset.length === 0) {
+    if (userResult.rows.length === 0) {
       // Don't reveal if email exists - security best practice
       // Connection pool kept open for reuse
       return res.json({ message: 'If this email exists, a reset link has been sent.' });
     }
 
-    const user = userResult.recordset[0];
+    const user = userResult.rows[0];
 
     // Rate limiting: Check for recent reset requests (max 10 per hour for testing)
-    const recentRequests = await pool.request()
-      .input('userId', sql.Int, user.id)
-      .query(`
-        SELECT COUNT(*) as count
-        FROM PasswordResetTokens
-        WHERE user_id = @userId
-        AND created_at > DATEADD(hour, -1, GETDATE())
-      `);
+    const recentRequests = await pool.query(`
+      SELECT COUNT(*) as count
+      FROM PasswordResetTokens
+      WHERE user_id = $1
+      AND created_at > NOW() - INTERVAL '1 hour'
+    `, [user.id]);
 
-    if (recentRequests.recordset[0].count >= 10) {
+    if (recentRequests.rows[0].count >= 10) {
       // Connection pool kept open for reuse
       return res.status(429).json({ error: 'Too many reset requests. Please try again later.' });
     }
@@ -325,14 +285,10 @@ router.post('/forgot-password',
     const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
 
     // Store token in database
-    await pool.request()
-      .input('userId', sql.Int, user.id)
-      .input('token', sql.NVarChar, resetToken)
-      .input('expiresAt', sql.DateTime2, expiresAt)
-      .query(`
-        INSERT INTO PasswordResetTokens (user_id, token, expires_at)
-        VALUES (@userId, @token, @expiresAt)
-      `);
+    await pool.query(`
+      INSERT INTO PasswordResetTokens (user_id, token, expires_at)
+      VALUES ($1, $2, $3)
+    `, [user.id, resetToken, expiresAt]);
 
     // Send email with reset link
     const resetLink = `https://daemonscripts.com/?token=${resetToken}&email=${encodeURIComponent(email)}`;
@@ -380,29 +336,24 @@ router.post('/reset-password',
       });
     }
 
-    const pool = await poolPromise;
-
     // Verify token and get user
-    const tokenResult = await pool.request()
-      .input('token', sql.NVarChar, token)
-      .input('email', sql.NVarChar, email.toLowerCase())
-      .query(`
-        SELECT prt.id as token_id, prt.user_id, prt.expires_at, prt.used, u.email
-        FROM PasswordResetTokens prt
-        JOIN Users u ON prt.user_id = u.id
-        WHERE prt.token = @token
-        AND LOWER(u.email) = @email
-        AND prt.used = 0
-        AND prt.expires_at > GETDATE()
-      `);
+    const tokenResult = await pool.query(`
+      SELECT prt.id as token_id, prt.user_id, prt.expires_at, prt.used, u.email
+      FROM PasswordResetTokens prt
+      JOIN Users u ON prt.user_id = u.id
+      WHERE prt.token = $1
+      AND LOWER(u.email) = $2
+      AND prt.used = FALSE
+      AND prt.expires_at > NOW()
+    `, [token, email.toLowerCase()]);
 
-    if (tokenResult.recordset.length === 0) {
+    if (tokenResult.rows.length === 0) {
       logger.security('Invalid password reset attempt', { email, ip: req.ip });
       // Connection pool kept open for reuse
       return res.status(400).json({ error: 'Invalid or expired reset token' });
     }
 
-    const tokenData = tokenResult.recordset[0];
+    const tokenData = tokenResult.rows[0];
 
     // Hash new password
     const saltRounds = 12;
@@ -413,38 +364,29 @@ router.post('/reset-password',
     passwordExpiresAt.setDate(passwordExpiresAt.getDate() + 60);
 
     // Update user password and reset expiration/flags
-    await pool.request()
-      .input('userId', sql.Int, tokenData.user_id)
-      .input('password', sql.NVarChar, passwordHash)
-      .input('passwordChangedAt', sql.DateTime2, new Date())
-      .input('passwordExpiresAt', sql.DateTime2, passwordExpiresAt)
-      .query(`
-        UPDATE Users
-        SET password = @password,
-            password_changed_at = @passwordChangedAt,
-            password_expires_at = @passwordExpiresAt,
-            force_password_change = 0,
-            updated_at = GETDATE()
-        WHERE id = @userId
-      `);
+    await pool.query(`
+      UPDATE Users
+      SET password = $1,
+          password_changed_at = $2,
+          password_expires_at = $3,
+          force_password_change = FALSE,
+          updated_at = NOW()
+      WHERE id = $4
+    `, [passwordHash, new Date(), passwordExpiresAt, tokenData.user_id]);
 
     // Mark token as used
-    await pool.request()
-      .input('tokenId', sql.Int, tokenData.token_id)
-      .query(`
-        UPDATE PasswordResetTokens
-        SET used = 1
-        WHERE id = @tokenId
-      `);
+    await pool.query(`
+      UPDATE PasswordResetTokens
+      SET used = TRUE
+      WHERE id = $1
+    `, [tokenData.token_id]);
 
     // Clean up old tokens for this user
-    await pool.request()
-      .input('userId', sql.Int, tokenData.user_id)
-      .query(`
-        DELETE FROM PasswordResetTokens
-        WHERE user_id = @userId
-        AND (used = 1 OR expires_at < GETDATE())
-      `);
+    await pool.query(`
+      DELETE FROM PasswordResetTokens
+      WHERE user_id = $1
+      AND (used = TRUE OR expires_at < NOW())
+    `, [tokenData.user_id]);
 
     logger.info('Password reset successful', { email, ip: req.ip });
 
