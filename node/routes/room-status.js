@@ -1,5 +1,7 @@
 const express = require('express');
 const { sql, poolPromise } = require('../db');
+const logger = require('../utils/logger');
+const { validate, body } = require('../middleware/validate');
 const router = express.Router();
 
 // GET /api/room-status - Get all rooms with latest check status
@@ -97,13 +99,20 @@ router.get('/', async (req, res) => {
     res.json({ rooms });
 
   } catch (error) {
-    console.error('Error fetching room status:', error);
+    logger.error('Error fetching room status', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch room status', details: error.message });
   }
 });
 
 // POST /api/room-status - Create new room OR submit check for existing room
-router.post('/', async (req, res) => {
+router.post('/',
+  validate([
+    body('checkData.ragStatus').optional().isIn(['green', 'amber', 'red', 'GREEN', 'AMBER', 'RED']).withMessage('RAG status must be green, amber, or red'),
+    body('checkData.checks').optional().isArray().withMessage('Checks must be an array'),
+    body('room.name').optional().trim().isLength({ min: 1, max: 255 }).withMessage('Room name must be 1-255 characters'),
+    body('room.scheduleDay').optional().isInt({ min: 0, max: 6 }).withMessage('Schedule day must be 0-6')
+  ]),
+  async (req, res) => {
   try {
     const { room, checkData } = req.body;
 
@@ -166,7 +175,7 @@ router.post('/', async (req, res) => {
     }
 
   } catch (error) {
-    console.error('Error saving room/check:', error);
+    logger.error('Error saving room/check', { error: error.message });
     res.status(500).json({ error: 'Failed to save room/check', details: error.message });
   }
 });
@@ -200,7 +209,7 @@ router.get('/:roomId/history', async (req, res) => {
     res.json({ history });
 
   } catch (error) {
-    console.error('Error fetching room history:', error);
+    logger.error('Error fetching room history', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch room history', details: error.message });
   }
 });
@@ -220,7 +229,7 @@ router.delete('/:roomId', async (req, res) => {
     res.json({ success: true, message: 'Room deleted successfully (all check history preserved)' });
 
   } catch (error) {
-    console.error('Error deleting room:', error);
+    logger.error('Error deleting room', { error: error.message });
     res.status(500).json({ error: 'Failed to delete room', details: error.message });
   }
 });

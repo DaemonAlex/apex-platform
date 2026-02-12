@@ -1,9 +1,9 @@
 const jwt = require('jsonwebtoken');
+const logger = require('../utils/logger');
 
 // Validate JWT_SECRET is set at startup
 if (!process.env.JWT_SECRET) {
-  console.error('❌ CRITICAL: JWT_SECRET environment variable is not set');
-  console.error('❌ Application cannot start without JWT secret for token verification');
+  logger.error('CRITICAL: JWT_SECRET environment variable is not set');
   process.exit(1);
 }
 
@@ -46,11 +46,13 @@ const authenticateToken = (req, res, next) => {
     next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
+      logger.security('Expired token used', { ip: req.ip, route: req.originalUrl });
       return res.status(401).json({
         error: 'Token expired',
         message: 'Please login again'
       });
     }
+    logger.security('Invalid token verification attempt', { ip: req.ip, route: req.originalUrl, error: err.message });
     return res.status(401).json({
       error: 'Invalid token',
       message: 'Authentication failed'
@@ -73,6 +75,14 @@ const requireRole = (allowedRoles) => {
     }
 
     if (!allowedRoles.includes(req.user.role)) {
+      logger.security('Unauthorized role access attempt', {
+        userId: req.user.userId,
+        email: req.user.email,
+        role: req.user.role,
+        requiredRoles: allowedRoles,
+        route: req.originalUrl,
+        ip: req.ip
+      });
       return res.status(403).json({
         error: 'Access forbidden',
         message: 'You do not have permission to access this resource'

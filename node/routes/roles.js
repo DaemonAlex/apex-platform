@@ -1,4 +1,6 @@
 const express = require('express');
+const logger = require('../utils/logger');
+const { validate, body, param } = require('../middleware/validate');
 const router = express.Router();
 
 // Complete roles data - matches actual roles used in the system
@@ -52,7 +54,7 @@ router.get('/', async (req, res) => {
   try {
     res.json(defaultRoles);
   } catch (error) {
-    console.error('Get roles error:', error);
+    logger.error('Get roles error', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch roles', details: error.message });
   }
 });
@@ -83,19 +85,20 @@ router.get('/permissions', async (req, res) => {
     
     res.json(permissions);
   } catch (error) {
-    console.error('Get permissions error:', error);
+    logger.error('Get permissions error', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch permissions', details: error.message });
   }
 });
 
 // Create new role
-router.post('/', async (req, res) => {
+router.post('/',
+  validate([
+    body('name').trim().notEmpty().withMessage('Name is required').matches(/^[a-zA-Z0-9_]+$/).withMessage('Name must be alphanumeric'),
+    body('displayName').trim().notEmpty().withMessage('Display name is required').isLength({ min: 1, max: 100 }).withMessage('Display name must be 1-100 characters')
+  ]),
+  async (req, res) => {
   try {
     const { name, displayName, permissions = [] } = req.body;
-
-    if (!name || !displayName) {
-      return res.status(400).json({ error: 'Name and display name are required' });
-    }
 
     // For now, just return success as roles are predefined
     const newRole = {
@@ -112,20 +115,21 @@ router.post('/', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Create role error:', error);
+    logger.error('Create role error', { error: error.message });
     res.status(500).json({ error: 'Failed to create role', details: error.message });
   }
 });
 
 // Update role
-router.put('/:id', async (req, res) => {
+router.put('/:id',
+  validate([
+    body('name').trim().notEmpty().withMessage('Name is required').matches(/^[a-zA-Z0-9_]+$/).withMessage('Name must be alphanumeric'),
+    body('displayName').trim().notEmpty().withMessage('Display name is required').isLength({ min: 1, max: 100 }).withMessage('Display name must be 1-100 characters')
+  ]),
+  async (req, res) => {
   try {
     const roleId = req.params.id;
     const { name, displayName, permissions = [] } = req.body;
-
-    if (!name || !displayName) {
-      return res.status(400).json({ error: 'Name and display name are required' });
-    }
 
     // For now, just return success as roles are predefined
     const updatedRole = {
@@ -142,7 +146,7 @@ router.put('/:id', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Update role error:', error);
+    logger.error('Update role error', { error: error.message });
     res.status(500).json({ error: 'Failed to update role', details: error.message });
   }
 });
@@ -156,7 +160,7 @@ router.delete('/:id', async (req, res) => {
     res.json({ message: 'Role deleted successfully' });
 
   } catch (error) {
-    console.error('Delete role error:', error);
+    logger.error('Delete role error', { error: error.message });
     res.status(500).json({ error: 'Failed to delete role', details: error.message });
   }
 });
