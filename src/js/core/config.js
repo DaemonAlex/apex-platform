@@ -4,6 +4,11 @@
  */
 
 export const CONFIG = {
+  // Branding - change these to customize per deployment
+  BRAND_NAME: 'APEX',
+  BRAND_LOGO: '/images/logo.png',
+  BRAND_COMPANY: '',
+
   // API Configuration
   API_BASE_URL: '/api',
   API_TIMEOUT: 30000, // 30 seconds

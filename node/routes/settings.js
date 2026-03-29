@@ -1,80 +1,94 @@
 const express = require('express');
+const { pool } = require('../db');
 const router = express.Router();
 
-// Mock settings - APEX expects these endpoints
+// Ensure AppConfig table exists
+async function ensureConfigTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS AppConfig (
+      key VARCHAR(100) PRIMARY KEY,
+      value JSONB NOT NULL,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+}
+
+// GET /api/settings - All settings
 router.get('/', async (req, res) => {
   try {
-    const settings = {
-      companyName: 'APEX Demo Company',
-      defaultBudget: 100000,
-      currency: 'USD'
-    };
-    
+    await ensureConfigTable();
+    const result = await pool.query('SELECT key, value FROM AppConfig');
+    const settings = {};
+    result.rows.forEach(r => { settings[r.key] = r.value; });
     res.json(settings);
   } catch (error) {
-    console.error('Get settings error:', error);
     res.status(500).json({ error: 'Failed to fetch settings', details: error.message });
   }
 });
 
-// Update settings
-router.post('/', async (req, res) => {
+// GET /api/settings/business-lines - Business lines list
+router.get('/business-lines', async (req, res) => {
   try {
-    res.json({ message: 'Settings updated successfully' });
+    await ensureConfigTable();
+    const result = await pool.query("SELECT value FROM AppConfig WHERE key = 'business_lines'");
+    res.json({ businessLines: result.rows[0]?.value || [] });
   } catch (error) {
-    console.error('Update settings error:', error);
-    res.status(500).json({ error: 'Failed to update settings', details: error.message });
+    res.status(500).json({ error: 'Failed to fetch business lines' });
   }
 });
 
-// Get productivity goals
-router.get('/productivity-goals', async (req, res) => {
+// PUT /api/settings/business-lines - Update business lines
+router.put('/business-lines', async (req, res) => {
   try {
-    const goals = {
-      weekly: {
-        projectsCompleted: 2,
-        tasksCompleted: 15,
-        hoursWorked: 40
-      },
-      monthly: {
-        projectsCompleted: 8,
-        tasksCompleted: 60,
-        hoursWorked: 160
-      }
-    };
-
-    res.json(goals);
+    const { businessLines } = req.body;
+    if (!Array.isArray(businessLines)) return res.status(400).json({ error: 'businessLines must be an array' });
+    await pool.query(
+      "INSERT INTO AppConfig (key, value) VALUES ('business_lines', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()",
+      [JSON.stringify(businessLines)]
+    );
+    res.json({ success: true });
   } catch (error) {
-    console.error('Get productivity goals error:', error);
-    res.status(500).json({ error: 'Failed to fetch productivity goals', details: error.message });
+    res.status(500).json({ error: 'Failed to update business lines' });
   }
 });
 
-// Update productivity goals
-router.post('/productivity-goals', async (req, res) => {
+// GET /api/settings/project-prefix - Project ID prefix
+router.get('/project-prefix', async (req, res) => {
   try {
-    const goals = req.body;
-
-    // Here you would save to database
-    res.json({
-      message: 'Productivity goals updated successfully',
-      goals: goals
-    });
+    await ensureConfigTable();
+    const result = await pool.query("SELECT value FROM AppConfig WHERE key = 'project_id_prefix'");
+    res.json({ prefix: result.rows[0]?.value || 'WTB' });
   } catch (error) {
-    console.error('Update productivity goals error:', error);
-    res.status(500).json({ error: 'Failed to update productivity goals', details: error.message });
+    res.status(500).json({ error: 'Failed to fetch prefix' });
   }
 });
 
-// Delete setting
-router.delete('/:key', async (req, res) => {
+// PUT /api/settings/project-prefix - Update prefix
+router.put('/project-prefix', async (req, res) => {
   try {
-    const key = req.params.key;
-
-    res.json({ message: `Setting '${key}' deleted successfully` });
+    const { prefix } = req.body;
+    if (!prefix || typeof prefix !== 'string') return res.status(400).json({ error: 'prefix is required' });
+    await pool.query(
+      "INSERT INTO AppConfig (key, value) VALUES ('project_id_prefix', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()",
+      [JSON.stringify(prefix)]
+    );
+    res.json({ success: true });
   } catch (error) {
-    console.error('Delete setting error:', error);
-    res.status(500).json({ error: 'Failed to delete setting', details: error.message });
+    res.status(500).json({ error: 'Failed to update prefix' });
+  }
+});
+
+// PUT /api/settings/:key - Generic config update
+router.put('/:key', async (req, res) => {
+  try {
+    const { value } = req.body;
+    await pool.query(
+      'INSERT INTO AppConfig (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()',
+      [req.params.key, JSON.stringify(value)]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update setting' });
   }
 });
 

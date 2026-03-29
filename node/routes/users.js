@@ -20,6 +20,28 @@ function validatePassword(password) {
 
 const validRoles = ['superadmin', 'admin', 'owner', 'project_manager', 'field_ops', 'auditor', 'viewer'];
 
+// Get current user profile
+router.get('/me', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, name, email, role, preferences, avatar, created_at, updated_at FROM Users WHERE id = $1',
+      [req.user.userId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    const user = result.rows[0];
+    let preferences = {};
+    try { preferences = user.preferences ? JSON.parse(user.preferences) : {}; } catch { preferences = {}; }
+    res.json({
+      id: user.id, name: user.name, email: user.email, preferences,
+      avatar: user.avatar, created_at: user.created_at,
+      Role: { name: user.role, displayName: user.role.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) },
+    });
+  } catch (error) {
+    logger.error('Get current user error', { error: error.message });
+    res.status(500).json({ error: 'Failed to fetch profile' });
+  }
+});
+
 // Get all users
 router.get('/', async (req, res) => {
   try {

@@ -1,21 +1,20 @@
-# CLAUDE.md - APEX Project Management System
+# CLAUDE.md - APEX Project Management Platform
 
-## 🎯 PROMPT: Core Instructions
+## Core Instructions
 
 **Always tell the truth. Never make up information or speculate.**
 
 - Base all statements on verifiable, factual, and current information
-- Cite sources transparently
-- Explicitly state "I cannot confirm this" if something can't be proven
-- Maintain objectivity - remove personal bias
+- Explicitly state "I cannot confirm this" if something cannot be proven
 - Always fully understand the current state before making changes
 - Back up to `G:\My Drive\APEX Backups` before code changes
+- **No em dashes ever.** Use periods, commas, or hyphens instead.
+- **Database is the single source of truth.** All data lives in PostgreSQL. No localStorage, no client-side state as source of truth.
 
 **Problem-Solving Approach:**
 - Explain reasoning step-by-step
 - Understand how changes affect the whole app, not just individual issues
 - Use differential troubleshooting - pay attention to symptoms pointing to root cause
-- Present information clearly with next steps
 - If unsure, ASK - never assume or speculate
 
 **Development Methodology (4 Phases):**
@@ -26,1047 +25,424 @@
 
 **Testing Requirements:**
 - **NEVER claim work is complete without FULL testing**
-- Test changes yourself before claiming they work
 - Backend changes: Test with curl/API calls
 - Frontend changes: Verify in running application
-- If can't test directly: State "UNTESTED - requires user verification on [platform]"
-
-**Stop Immediately When:**
-- Making assumptions without verification
-- User says "nothing changed" after modifications
-- Moving too fast to think through consequences
-- About to modify multiple files simultaneously
+- If cannot test directly: State "UNTESTED - requires user verification"
 
 ---
 
-## 📊 CURRENT STATE (as of January 27, 2026)
+## System Status (as of 2026-03-29)
 
-### ✅ System Status: OPERATIONAL (v7.0 Modular)
+### Architecture Overview
 
-**Infrastructure:**
-- Cloudflared Tunnel: ✅ Running (4 connections, tunnel ID: 129c01c2-a18a-4b13-934a-5c334eb37052)
-- nginx (APEX app): ✅ Running on port 80 (apex.daemonscripts.com)
-- nginx (Portfolio): ✅ Running on port 8080 (daemonscripts.com)
-- Node.js (backend): ✅ Running on port 3000
-- SQL Server: ✅ Running on port 1433
-- Vite Dev Server: ✅ Available on port 5173 (development)
-- Public URLs:
-  - https://daemonscripts.com → ✅ Portfolio site (port 8080)
-  - https://apex.daemonscripts.com → ✅ APEX app (port 80)
+```
+Internet -> Cloudflare Tunnel -> nginx (port 80) -> Express API (port 3001)
+                                                  -> Static files (index.html shell)
+                                                  -> Vue 3 IIFE bundle (/vue/apex-rooms.iife.js)
+```
 
-**Active Features:**
-- Project management with WTB_ prefix IDs
-- Hierarchical subtasks with progress rollup
-- Task attachments (mobile-optimized photo/document uploads)
-- Database-only authentication (no hardcoded credentials)
-- JWT tokens with 24-hour expiration
-- **Modular ES Module architecture (v7.0)**
-- State bridge for legacy/modern sync
-- New UI modules (auth, notifications, modal)
+### Tech Stack
 
-**Key Technical Constraints:**
-1. **Project IDs MUST start with `WTB_`** - Backend filter: `WHERE id LIKE 'WTB_%'` (node/routes/projects.js:53)
-2. **Field Mapping:** Frontend `estimatedBudget` → Backend `budget`, Frontend `businessLine` → Backend `client`
-3. **Modular Architecture:** Now using Vite + ES Modules (all phases complete)
-4. **Default Admin:** `admin@apex.local` / `***REDACTED-PASSWORD***`
+| Layer | Technology |
+|-------|-----------|
+| Frontend | Vue 3 + TypeScript + Naive UI + Pinia (6/6 sections migrated) |
+| App Shell | Vanilla JS monolith (auth, profile, navigation, theme only) |
+| Backend | Express.js (Node.js) with raw SQL + Drizzle ORM schema |
+| Database | PostgreSQL 16 (apex_db) |
+| Build | Vite 8 (IIFE output to `/vue/apex-rooms.iife.js`, ~2.0MB) |
+| Icons | Phosphor Icons (web CDN) |
+| Auth | JWT (24-hour expiration) |
+
+### Infrastructure
+
+| Service | Port | NSSM Name | Status |
+|---------|------|-----------|--------|
+| Express Backend | 3001 | APEX-Backend | Running |
+| nginx | 80 | nginx | Running |
+| PostgreSQL 16 | 5432 | postgresql-x64-16 | Running |
+| Cloudflare Tunnel | - | cloudflared | Running |
+| Vue Dev Server (development only) | 5173 | - | Use `cd client && npm run dev` |
+
+### URLs
+
+| URL | What |
+|-----|------|
+| `https://apex.daemonscripts.com` | Production (via Cloudflare tunnel -> nginx -> port 3001) |
+| `https://apex.daemonscripts.com/health` | Backend health check |
+| `http://apex.localhost` | Local access (via nginx) |
+
+### Credentials
+
+| What | Value |
+|------|-------|
+| Admin login | `admin@apex.local` / `***REDACTED-PASSWORD***` |
+| PostgreSQL superuser | `postgres` / `***REDACTED-PASSWORD***` |
+| PostgreSQL app user | `apex_user` / `***REDACTED-PASSWORD***` |
+| Database | `apex_db` on localhost:5432 |
+| GitHub | https://github.com/DaemonAlex/apex-platform |
 
 ---
 
-## 🏗️ MODULARIZATION PROJECT (Started January 27, 2026)
+## Major Architectural Decision: Vue 3 Migration (2026-03-28)
 
-### Overview
-Converting the 18,000+ line monolithic `index.html` to a modern ES Module architecture using Vite. Using the **"Strangler Fig" pattern** - gradually extracting pieces while keeping the main app running.
+### Why
 
-### Why Vite?
-- Zero configuration needed
-- Blazing fast Hot Module Replacement (HMR)
-- Native ES Module support
-- Future-ready for React/Vue migration
+The 20,000+ line vanilla JS monolith in `index.html` has reached its maintainability limit. Previous attempts at modularization (Vite ES Modules, "Strangler Fig" pattern in January 2026) helped with organization but did not solve the fundamental problem: everything is in one HTML file with no component model, no type safety, and no proper state management.
 
-### Current Progress
+### Migration Status: COMPLETE (all 6 sections)
 
-| Phase | Status | Description |
-|-------|--------|-------------|
-| Phase 1 | ✅ Complete | Setup & Infrastructure (Vite, directory structure) |
-| Phase 2a | ✅ Complete | API Client (centralized fetch wrapper) |
-| Phase 2b | ✅ Complete | CSS Extraction (4,471 lines → src/css/main.css) |
-| Phase 2c | ✅ Complete | Utility Functions (formatters, project helpers) |
-| Phase 3 | ✅ Complete | State Management (Bridge pattern for sync) |
-| Phase 4 | ✅ Complete | UI Modules (Auth, Notifications, Modal) |
-| Phase 5 | ✅ Complete | Full Migration (legacy→module bridges) |
+| Section | App Component | Pinia Store | Mount Function |
+|---------|--------------|-------------|----------------|
+| Dashboard | DashboardApp.vue | (direct API) | `mountDashboard` |
+| Projects | ProjectApp.vue | projects.ts | `mountProjects` |
+| Room Status | RoomApp.vue | rooms.ts | `mountRooms` |
+| Field Ops | FieldOpsApp.vue | (direct API) | `mountFieldOps` |
+| Reports | ReportsApp.vue | (direct API) | `mountReports` |
+| Admin | AdminApp.vue | admin.ts | `mountAdmin` |
 
-### ⚠️ v7.1 Priority Areas
+The monolith (`index.html`) now only handles: authentication/login, profile management, app shell (navigation, sidebar, theme switching). All section content is rendered by Vue apps mounted via `mountVueSection()`.
 
-While v7.0 is production-ready, these gaps should be addressed in the next iteration:
+**Mount pattern:** Each Vue app is exposed globally (e.g., `window.ApexAdmin = { mount: mountAdmin }`) and the monolith calls `mountVueSection(containerId, globalName)` when navigating to a section.
 
-| Priority | Area | Risk | Action |
-|----------|------|------|--------|
-| 🔴 Critical | **Testing** | Manual verification only; no regression protection for financial data | Add Jest + Supertest, target 80% coverage |
-| 🔴 Critical | **XSS + Cookies** | localStorage JWTs vulnerable to XSS (82 innerHTML instances) | DOMPurify + httpOnly cookies (must ship together) |
-| 🟡 High | **State Management** | Custom reactive store will become brittle as app grows | Plan React/Vue migration or adopt Redux/Zustand |
+### New Frontend Stack
+
+| Technology | Purpose |
+|------------|---------|
+| **Vue 3** (Composition API) | Component framework |
+| **TypeScript** | Type safety |
+| **Vite** | Build tool and dev server |
+| **Naive UI** | Component library (tables, forms, modals, etc.) |
+| **Pinia** | State management (replaces custom reactive store) |
+| **Vue Router** | Client-side routing |
+
+### New Backend Addition
+
+| Technology | Purpose |
+|------------|---------|
+| **Drizzle ORM** | Type-safe PostgreSQL queries (replacing raw SQL in route files) |
+
+Express stays as the HTTP framework. Drizzle gets added alongside existing raw queries - no big-bang rewrite of the backend.
 
 ### Directory Structure
+
 ```
-/apex-platform
-├── index.html              # Original monolith (still works)
-├── package.json            # Updated with Vite
-├── vite.config.js          # Dev server + API proxy config
-└── src/
-    ├── main.js             # Bridge entry point (exposes to window.*)
-    ├── css/
-    │   └── main.css        # Extracted CSS (4,471 lines)
-    └── js/
-        ├── api/
-        │   └── client.js   # Centralized API client with auth
-        ├── core/
-        │   ├── config.js   # App configuration & feature flags
-        │   ├── state.js    # Reactive state store with Actions
-        │   └── state-bridge.js  # Syncs legacy ↔ modern state
-        ├── ui/
-        │   ├── index.js    # UI module exports
-        │   ├── auth.js     # Auth UI helpers (validation, login/logout)
-        │   ├── notifications.js  # Toast notifications system
-        │   └── modal.js    # Modal/dialog system
-        └── utils/
-            ├── formatters.js       # General utilities (209 lines)
-            └── project-helpers.js  # Project-specific helpers (408 lines)
+F:\Server\webapps\sites\apex-platform\
+  index.html                    # App shell (auth, nav, profile) + Vue mount points
+  vue\
+    apex-rooms.iife.js          # Built Vue bundle (~2.0MB, all 6 sections)
+  client\                       # Vue 3 source
+    src\
+      mount.ts                  # Entry point - exports mount functions for each section
+      AdminApp.vue              # Admin section (Users, Roles, Settings, Audit)
+      DashboardApp.vue          # Dashboard section
+      ProjectApp.vue            # Projects section (list + detail views)
+      ReportsApp.vue            # Reports section (Portfolio, Budget, Timeline, MyTasks)
+      RoomApp.vue               # Room Status section (Rooms, Locations, Standards)
+      FieldOpsApp.vue           # Field Ops section
+      stores\                   # Pinia stores
+        admin.ts, projects.ts, rooms.ts, auth.ts
+      composables\
+        useApi.ts               # Shared API client (apiFetch with JWT)
+      components\
+        admin\                  # Admin tab components
+          UsersTab.vue, RolesTab.vue, SettingsTab.vue, AuditLogTab.vue
+          settings\             # Settings sub-tab components
+            GeneralSettings.vue, NotificationSettings.vue,
+            DatabaseSettings.vue, FinancialSettings.vue
+        projects\               # Project tab components
+      types\
+        index.ts, admin.ts      # TypeScript interfaces
+      views\
+        RoomStatus.vue, LocationManager.vue, ProjectList.vue, ProjectDetail.vue
+    vite.config.ts              # IIFE build config (output to ../vue/)
+    package.json                # Vue 3.5, Naive UI 2.44, Pinia 3.0, Vite 8
+  node\                         # Backend (Express + PostgreSQL)
+    server.js
+    db.js
+    routes\                     # 15 route files
+    middleware\                  # auth.js, audit.js, validate.js
+    drizzle\schema.ts           # Drizzle ORM schema definitions
+  src\                          # Legacy Vite modules (bridge from Jan 2026, being phased out)
 ```
 
-### Running the Application
+---
 
-**Development (Vite - recommended):**
-```bash
-cd /home/daemonalex/projects/apex-platform
-npm run dev
-# Access at http://localhost:5173
-```
+## Room Status System Redesign (2026-03-28)
 
-**Production (nginx):**
-```bash
-# Uses Docker containers on port 80
-# Access at http://localhost
-```
+### New Database Schema
 
-### New API Client Features
-Located in `src/js/api/client.js`:
-- Automatic JWT token injection
-- Request timeout handling (30s default, 2min for uploads)
-- Centralized error handling with `ApiError` class
-- Auth event dispatching (`auth:unauthorized`, `auth:logout`)
-- Domain-specific endpoints:
-  - `authApi.login()`, `authApi.logout()`, `authApi.register()`
-  - `projectsApi.getAll()`, `projectsApi.create()`, `projectsApi.update()`
-  - `usersApi.getAll()`, `usersApi.getCurrent()`
-  - `adminApi.getStats()`, `adminApi.getUsers()`
-  - `attachmentsApi.upload()`, `attachmentsApi.getForTask()`
+The room system has been redesigned from a flat room list to a managed hierarchy with equipment tracking and configurable checks.
 
-### Extracted Utility Functions
-All exposed to `window.*` for backward compatibility:
+**Tables (auto-created by `ensureRoomTables()` in room-status.js):**
 
-**Formatters (src/js/utils/formatters.js):**
-- `formatCurrency()`, `formatDate()`, `formatDateTime()`, `formatRelativeTime()`
-- `formatPercentage()`, `formatFileSize()`, `formatPhoneNumber()`
-- `truncateText()`, `capitalize()`, `toTitleCase()`
-- `debounce()`, `throttle()`, `deepClone()`, `isEmpty()`
-- `generateId()`, `generateProjectId()` (with WTB_ prefix)
+| Table | Purpose |
+|-------|---------|
+| **Locations** | Buildings/branches (name, address, city, state, zip, contact info) |
+| **Floors** | Floors within a location (location_id FK, sort_order) |
+| **Rooms** | Core room records (room_id, name, type, capacity, location_id FK, floor_id FK, standard_id FK, check_frequency, check_day) |
+| **RoomEquipment** | Equipment inventory per room (equipment type, model, serial, install date, warranty, notes) |
+| **RoomStandards** | Templates defining expected equipment/config per room type (name, room_type, equipment list as JSONB) |
+| **RoomChecks** | Audit trail of tech checks (checked_by, check_date, status, issues JSONB, snow_ticket, notes) |
 
-**Project Helpers (src/js/utils/project-helpers.js):**
-- `getTasks()`, `normalizeProject()`, `toArrayMaybe()`
-- `calculateProjectProgress()`, `calculateProjectStatus()`
-- `calculateProjectHealth()`, `calculateTaskAggregates()`
-- `getProgressColor()`, `getRagColor()`, `getStatusColor()`
-- `formatStatus()`, `formatProjectType()`, `formatBusinessLine()`
-- `sortProjects()`, `filterProjectsBySearch()`, `filterProjectsByStatus()`
-- `getProjectStats()`, `getDefaultTasksForType()`
+### Room Types
 
-### The "Bridge" Pattern
-During migration, all new modules are exposed to `window.*` so legacy code continues to work:
+Conference, Huddle, Boardroom, Training, Lobby, Community Room, Office, plus custom types.
+
+### Check System
+
+- Configurable frequency per room: daily, weekly, biweekly, monthly
+- Each check records: who checked, when, pass/fail status, issue descriptions, SNOW ticket numbers
+- Full audit trail - checks are never deleted, only appended
+- Compliance checking: compare room equipment against its assigned standard
+
+### Key Backend File
+
+`F:\Server\webapps\sites\apex-platform\node\routes\room-status.js` - Contains all CRUD endpoints plus `ensureRoomTables()` auto-migration function that creates/updates all room-related tables on startup.
+
+---
+
+## Reports System (2026-03-28)
+
+### What Changed
+
+Previously there were two separate views (Reports and Insights) that were largely redundant. The old `metrics.js` and `insights.js` route files contained SQL Server stored procedure calls that were broken since the PostgreSQL migration. Both files have been deleted.
+
+### Current State
+
+Reports are now a single unified view with 4 tabs, backed by real PostgreSQL endpoints.
+
+| Tab | Endpoint | What It Shows |
+|-----|----------|---------------|
+| Portfolio | `GET /api/reports/portfolio` | Executive summary: project counts by status, budget health, at-risk count, business line breakdown |
+| Budget | `GET /api/reports/budget` | Budget vs actual across projects, over/under tracking |
+| Timeline | `GET /api/reports/timeline` | Project timeline analysis, on-time delivery metrics |
+| My Tasks | `GET /api/reports/my-tasks` | Current user's task assignments across all projects |
+
+There is also a 5th endpoint for report data export.
+
+**Backend file:** `F:\Server\webapps\sites\apex-platform\node\routes\reports.js`
+
+---
+
+## Completed Work (Recent, newest first)
+
+| Date | What |
+|------|------|
+| 2026-03-29 | **VUE 3 MIGRATION COMPLETE.** All 6 sections (Dashboard, Projects, Room Status, Field Ops, Reports, Admin) now run on Vue 3. Admin section migrated with 11 new files, fixing broken permission editor, adding delete confirmations, masking DB credentials, eliminating duplicate navigation, splitting settings into sub-tabs, adding CSV audit export. Bundle v=20, ~2.0MB. |
+| 2026-03-28 | **ARCHITECTURAL DECISION: Vue 3 migration.** Frontend moving from vanilla JS monolith to Vue 3 + TypeScript + Naive UI + Pinia + Vue Router. Backend adding Drizzle ORM. Section-by-section, starting with Room Status. |
+| 2026-03-28 | Room Status system redesigned: Locations > Floors > Rooms hierarchy, equipment inventory, room standards with compliance, configurable check frequency (daily/weekly/biweekly/monthly), full audit trail with SNOW tickets |
+| 2026-03-28 | Phase 1B complete: task creation streamlined to 3-field quick-add (name, phase, priority) with expandable details, dynamic phases per project type |
+| 2026-03-28 | Reports merged from 2 views into 1 with 4 tabs (Portfolio, Budget, Timeline, My Tasks), backed by real PostgreSQL endpoints. Dead metrics.js and insights.js (SQL Server code) deleted. |
+| 2026-03-28 | CSS consolidated: unified .apex-card system, dark mode consolidated under [data-theme="dark"] |
+| 2026-03-28 | All remaining emoji replaced with Phosphor icons |
+| 2026-03-28 | Dark mode: full implementation, JS toggle fix, metric icons, status badges |
+| 2026-03-28 | Branding: logo configurable via window.APEX_BRAND, removed hardcoded Wintrust logo |
+| 2026-03-28 | UX: removed 9 noisy notifications, fixed user dropdown "Loading..." bug |
+| 2026-03-27 | Phase 1A complete: project creation streamlined from 18 fields to 5, added Telephony and UC Deployment types |
+| 2026-03-27 | Server infrastructure overhaul: migrated from Docker/WSL to native Windows NSSM services |
+| 2026-03-27 | APEX Platform deployed on Windows Server: PostgreSQL 16, backend on port 3001, nginx config, NSSM service |
+| 2026-03-27 | Cloudflare tunnel configured: apex.daemonscripts.com -> nginx port 80 -> API port 3001 |
+| 2026-01-27 | Vite ES Module modularization (Strangler Fig pattern) - all 5 phases complete |
+
+---
+
+## Planned Work
+
+### Post-Migration Cleanup
+
+- Remove dead admin JS functions from index.html (lines ~17762-19020, unreachable code)
+- Consider extracting shared `themeOverrides` into a composable (currently duplicated in each App.vue)
+- Migrate Profile section to Vue (last remaining monolith UI besides auth)
+
+### Backend Improvements
+
+- Implement DB config endpoints (`admin/db/config`, `admin/db/test`, `admin/db/create-mariadb-user`) - currently called from frontend but don't exist
+- Persist roles to database instead of in-memory array in `roles.js`
+- Add Drizzle ORM alongside existing raw queries for new features
+
+### Feature Expansion
+
+- Three report levels: Portfolio (executive), Project deep dive, Individual contributor
+- View transitions between sections
+- Bulk user actions in Admin
+- Audit log detail view (expand rows to see full change context)
+
+---
+
+## Key Files Reference
+
+| File | What |
+|------|------|
+| `F:\Server\webapps\sites\apex-platform\index.html` | App shell + Vue mount points (still ~19K lines, has dead code) |
+| `F:\Server\webapps\sites\apex-platform\vue\apex-rooms.iife.js` | Built Vue bundle (all 6 sections, ~2.0MB) |
+| `F:\Server\webapps\sites\apex-platform\client\src\mount.ts` | Vue entry point - all mount functions |
+| `F:\Server\webapps\sites\apex-platform\client\src\composables\useApi.ts` | Shared API client (apiFetch) |
+| `F:\Server\webapps\sites\apex-platform\node\server.js` | Express entry point |
+| `F:\Server\webapps\sites\apex-platform\node\db.js` | PostgreSQL connection pool |
+| `F:\Server\webapps\sites\apex-platform\node\routes\projects.js` | Project CRUD (WTB_ prefix filter) |
+| `F:\Server\webapps\sites\apex-platform\node\routes\reports.js` | 5 report endpoints (real PostgreSQL) |
+| `F:\Server\webapps\sites\apex-platform\node\routes\room-status.js` | Room system (6 tables, full CRUD) |
+| `F:\Server\webapps\sites\apex-platform\node\routes\auth.js` | Authentication (JWT) |
+| `F:\Server\webapps\sites\apex-platform\service-start.bat` | NSSM service startup script |
+
+---
+
+## Technical Constraints
+
+1. **Project IDs MUST start with `WTB_`** - Backend filter: `WHERE id LIKE 'WTB_%'` in `projects.js`
+2. **Field Mapping:** Frontend `estimatedBudget` maps to backend `budget`, Frontend `businessLine` maps to backend `client`
+3. **Phosphor Icons only** - no emoji in the UI. CDN: `https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css`
+4. **Dark mode** - all CSS must work under `[data-theme="dark"]`
+5. **PostgreSQL** - all queries use PostgreSQL syntax (not SQL Server). Database is `apex_db`.
+6. **NSSM services** - backend runs as Windows service `APEX-Backend`, restart with `nssm restart APEX-Backend`
+
+---
+
+## API Endpoints
+
+| Route File | Base Path | Purpose |
+|------------|-----------|---------|
+| auth.js | `/api/auth/*` | Login, logout, register, password reset |
+| projects.js | `/api/projects/*` | Project CRUD with WTB_ filter |
+| users.js | `/api/users/*` | User management |
+| admin.js | `/api/admin/*` | Admin operations, stats |
+| reports.js | `/api/reports/*` | Portfolio, budget, timeline, my-tasks (4-tab reports) |
+| room-status.js | `/api/room-status/*` | Rooms, locations, floors, equipment, standards, checks |
+| attachments.js | `/api/attachments/*` | File uploads |
+| audit.js | `/api/audit/*` | Audit log |
+| roles.js | `/api/roles/*` | Role management |
+| settings.js | `/api/settings/*` | App settings |
+| fieldops.js | `/api/fieldops/*` | Field operations |
+
+---
+
+## User Roles
+
+| Role | Access |
+|------|--------|
+| Superadmin / Admin / Owner / Root | Full access including administration |
+| Project Manager | Project management capabilities |
+| Field Ops | Field operations access |
+| Auditor | Read-only access |
+
+---
+
+## Existing Vite Module Bridge (Legacy)
+
+The `src/` directory contains ES modules from the January 2026 modularization effort. These are exposed to `window.*` for backward compatibility with the monolith:
+
 ```javascript
-// In src/main.js
+// src/main.js exposes modules to window for legacy code
 import { formatCurrency } from './js/utils/formatters.js';
-window.formatCurrency = formatCurrency; // Legacy code can still use it
+window.formatCurrency = formatCurrency;
 ```
 
-### Next Steps (Phase 3)
-1. **Enable new state management** - Set `FEATURES.USE_NEW_STATE = true` in config.js
-2. **Migrate API calls** - Replace `fetch('/api/...')` calls with `api.get()`, `projectsApi.getAll()`, etc.
-3. **Extract UI modules** - Auth (login/logout), Dashboard, Project List
+Key modules in `src/js/`:
+- `api/client.js` - Centralized API client with JWT injection, timeout handling, domain-specific endpoints
+- `core/state.js` - Reactive state store with Actions
+- `core/state-bridge.js` - Syncs legacy `window.AppState` with modern state
+- `ui/auth.js` - Auth UI helpers (validation, login/logout, lockout protection)
+- `ui/notifications.js` - Toast notification system
+- `ui/modal.js` - Modal/dialog system
+- `utils/formatters.js` - Currency, date, file size, phone formatters
+- `utils/project-helpers.js` - Project calculations, filtering, sorting
 
-### Key Files to Understand
-- `src/main.js` - Entry point, imports all modules, exposes to window
-- `src/js/core/config.js` - Feature flags control migration rollout
-- `vite.config.js` - API proxy configuration for development
+This bridge pattern will be phased out as features migrate to Vue components.
 
-### Testing the Modules
+---
+
+## Troubleshooting
+
+### Backend not responding
 ```bash
-# Check if modules load
-curl http://localhost:5173/src/main.js | head -20
-
-# Check CSS extraction
-curl http://localhost:5173/src/css/main.css | head -20
-
-# Verify API proxy works
-curl http://localhost:5173/api/health
+nssm status APEX-Backend
+nssm restart APEX-Backend
+curl http://localhost:3001/api/health
 ```
 
-### Migration Status Command
-Run in browser console to see module status:
-```javascript
-APEX_migrationStatus()
-// Shows: modules loaded, lines extracted, legacy overrides
-```
+### Projects not showing
+Project ID does not start with `WTB_`. Backend filters with `WHERE id LIKE 'WTB_%'`.
 
-### Known Issues
-- CSS remains in index.html AND src/css/main.css during transition (intentional for production compatibility)
-- `pool.close()` bug fixed in ALL route files (auth.js, projects.js, users.js, admin.js, audit.js, room-status.js) - connection pool stays open for reuse
-
-### State Bridge Pattern (Phase 3)
-
-The State Bridge (`src/js/core/state-bridge.js`) syncs the legacy `window.AppState` with the new modular `AppState`:
-
-**How it works:**
-1. Legacy code continues to modify `window.AppState` directly
-2. Key state changes call `window.notifyStateChange(key, value)` to sync to modern state
-3. Modern state changes automatically sync back to legacy state
-4. Both remain in sync during the transition period
-
-**Integration points in index.html:**
-- `loginUser()` - notifies on user login
-- `logout()` - notifies on user logout
-- `loadProjectsFromBackend()` - notifies when projects are loaded
-- `deleteProject()` - notifies when projects are deleted
-
-**Using in new code:**
-```javascript
-// Modern modules can use the new state directly
-import { AppState, Actions } from './js/core/state.js';
-
-// Get state
-const projects = AppState.get('projects');
-const user = AppState.get('currentUser');
-
-// Update state (automatically syncs to legacy)
-Actions.setProjects(newProjects);
-Actions.setUser(newUser);
-
-// Subscribe to changes
-AppState.subscribe('projects', (newProjects, oldProjects) => {
-  console.log('Projects changed:', newProjects.length);
-});
-```
-
-### UI Modules (Phase 4)
-
-**Auth Module (`src/js/ui/auth.js`):**
-- `validateEmail(email)` - Validate email format
-- `validatePassword(password)` - Check password requirements, returns `{ isValid, errors, strength }`
-- `calculatePasswordStrength(password)` - Returns 0-100 score
-- `getPasswordStrengthLabel(strength)` - Returns `{ label, color }`
-- `login(email, password)` - Async login with lockout protection
-- `logout()` - Clear auth state
-- `requestPasswordReset(email)` - Send reset email
-- `resetPassword(token, email, newPassword)` - Complete reset
-- `isAuthenticated()` - Check session validity
-- `getAuthState()` - Get full auth UI state
-
-**Notifications Module (`src/js/ui/notifications.js`):**
-```javascript
-// Show notifications
-Notifications.success('Project saved!');
-Notifications.error('Failed to load');
-Notifications.warning('Unsaved changes');
-Notifications.info('Loading...');
-
-// Confirm dialog
-const confirmed = await Notifications.confirm('Delete this project?', {
-  title: 'Confirm Delete',
-  type: 'danger'
-});
-```
-
-**Modal Module (`src/js/ui/modal.js`):**
-```javascript
-// Create custom modal
-const modal = Modal.create({
-  title: 'Edit Project',
-  content: '<form>...</form>',
-  buttons: [
-    { label: 'Cancel', onClick: (m) => m.close() },
-    { label: 'Save', primary: true, onClick: handleSave }
-  ]
-});
-
-// Built-in dialogs
-await Modal.alert('Operation complete');
-const name = await Modal.prompt('Enter project name:');
-```
-
----
-
-## 🖥️ LOCAL DEV ENVIRONMENT (WSL)
-
-### Location
-- **Path:** `/home/daemonalex/projects/apex-platform`
-- **Windows equivalent:** `\\wsl$\Ubuntu\home\daemonalex\projects\apex-platform`
-
-### Running Services (Local Dev)
-
-| Service | Port | Command |
-|---------|------|---------|
-| Vite Dev Server | 5173 | `npm run dev` |
-| Node.js Backend | 3000 | `cd node && npm start` |
-| SQL Server | 1433 | Docker container `apex-sqlserver` |
-| nginx | 80 | Docker container `apex-nginx` |
-
-### Database Credentials (Local Dev)
-```
-Host: localhost
-Database: APEX_DB
-User: SA
-Password: ApexDemo2026Secure
-```
-
-### Admin Login (Local Dev)
-```
-Email: admin@apex.local
-Password: ***REDACTED-PASSWORD***
-```
-
-### Quick Start Commands
+### Database connection issues
 ```bash
-# Start SQL Server (if not running)
-sg docker -c 'docker start apex-sqlserver'
-
-# Start backend
-export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-cd /home/daemonalex/projects/apex-platform/node
-node server.js &
-
-# Start Vite dev server
-cd /home/daemonalex/projects/apex-platform
-npm run dev
-
-# Or start nginx for production mode
-sg docker -c 'docker start apex-nginx'
+# Check PostgreSQL is running
+sc query postgresql-x64-16
+# Connect directly
+psql -h localhost -U apex_user -d apex_db
 ```
 
----
-
-## 🔧 CLOUDFLARED TUNNEL - IMPORTANT NOTES
-
-**DO NOT panic about tunnel errors in logs during container restarts.**
-
-**Current Working Configuration:**
-- Config: `C:\Users\stor0\.cloudflared\config.yml`
-- Command: `"C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel run daemonscripts-apex`
-- Running as: Process (not Windows service)
-
-**How to Check Tunnel Status:**
-1. **Test accessibility:** `curl -I https://daemonscripts.com` (should return 200 OK)
-2. **Check connections:** Look for "Registered tunnel connection" in logs (4 connections = healthy)
-3. **Local nginx:** `curl -I http://127.0.0.1:80` (should return 200 OK)
-
-**Normal Behavior:**
-- Tunnel logs will show temporary connection errors during container restarts
-- Errors like "dial tcp 127.0.0.1:80: connectex: No connection could be made" are NORMAL when containers restart
-- If tunnel shows 4 registered connections, it's working fine
-- Tunnel automatically recovers when nginx becomes accessible again
-
-**If Tunnel Actually Down (HTTP 530 errors on public URL):**
-- Restart manually: `"C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel run daemonscripts-apex`
-- Or use Task Scheduler to auto-start at boot
-
-**Ingress Configuration (Cloudflare Zero Trust Dashboard):**
-- daemonscripts.com → http://127.0.0.1:8080 (portfolio nginx)
-- www.daemonscripts.com → http://127.0.0.1:8080 (portfolio nginx)
-- apex.daemonscripts.com → http://127.0.0.1:80 (APEX nginx)
-- api.daemonscripts.com → http://localhost:3000 (backend)
-- admin.daemonscripts.com → http://localhost:8080
-- dev.daemonscripts.com → http://localhost:5173
-- health.daemonscripts.com → http://localhost:8080
-
-**NOTE:** Tunnel configuration is managed in Cloudflare Zero Trust dashboard under "Public Hostnames". Local config.yml file is NOT used when dashboard configuration exists.
+### Public URL returning errors
+Check Cloudflare tunnel, then nginx, then backend - in that order:
+1. `nssm status cloudflared`
+2. `nssm status nginx`
+3. `nssm status APEX-Backend`
 
 ---
 
-## 🐳 DOCKER CONTAINERS
+## Session Resume Checklist
 
-### Quick Commands
+**Last session:** 2026-03-29
 
+**What was completed:**
+- Vue 3 migration is DONE - all 6 sections migrated
+- Admin section migrated with full UX improvements (11 new Vue files)
+- Bundle rebuilt (v=20), backend restarted, 10/10 reports passing
+
+**Quick resume commands:**
 ```bash
-# Check status
-docker ps -a | findstr apex
+# Check everything works
+cd F:\Server\webapps\sites\apex-platform\node && node check-reports.js
 
-# Restart containers
-docker restart apex-nginx-prod
-docker restart apex-node-prod
+# Rebuild Vue after changes
+cd F:\Server\webapps\sites\apex-platform\client && npm run build
 
-# Check logs
-docker logs apex-node-prod --tail 30
+# Bump cache (increment v=N in index.html line 20)
+# <script src="/vue/apex-rooms.iife.js?v=20" defer></script>
 
-# Health check
-curl http://localhost/api/health
+# Restart backend
+nssm restart APEX-Backend
 ```
 
-### Container Details
-- **apex-nginx-prod:** APEX app web server, port 80, volume: C:/DEV:/usr/share/nginx/html
-- **daemonscripts-portfolio:** Portfolio website, port 8080, volume: C:/DEV/portfolio:/usr/share/nginx/html
-- **apex-node-prod:** Backend API, port 3000, volume: C:/DEV:/app
-- **sqlserver-prod:** Database, port 1433, named volume for persistence
-- **Network:** apex-network
+**Next steps (pick any):**
+1. Clean up dead admin JS from monolith (~250 lines of unreachable code)
+2. Implement missing DB config backend endpoints
+3. Persist roles to database instead of in-memory
+4. Migrate Profile section to Vue (last monolith UI)
+5. Feature work: bulk user actions, audit detail views, report drill-down
 
-### Emergency Recovery
-See "Container Architecture & Emergency Procedures" section at bottom of document.
+**No blockers.**
 
 ---
 
-## 📅 CHANGE HISTORY
+## Historical Notes
 
-### January 27, 2026 - Modularization Project Kickoff
+### Pre-Migration Architecture (before 2026-03-27)
 
-#### **🏗️ Major Architecture Refactoring Started**
+The APEX platform originally ran on:
+- **Database:** Microsoft SQL Server (in Docker container `apex-sqlserver`)
+- **Infrastructure:** Docker containers on WSL (Ubuntu) at `/home/daemonalex/projects/apex-platform`
+- **Backend port:** 3000 (now 3001)
+- **Tunnel config:** Local `config.yml` with separate tunnel ID `129c01c2-a18a-4b13-934a-5c334eb37052`
 
-**Goal:** Convert 18,000+ line monolithic index.html to modern ES Module architecture using Vite.
+This was all replaced with native Windows services and PostgreSQL on 2026-03-27. The Docker/WSL setup is no longer in use.
 
-**Work Completed:**
+### January 2026 Modularization (Strangler Fig)
 
-1. **Environment Setup (WSL)**
-   - Moved project to native Linux filesystem: `/home/daemonalex/projects/apex-platform`
-   - Installed Node.js 20 via nvm
-   - Set up Docker containers (SQL Server, nginx) on apex-network
+Attempted to modernize the monolith by extracting modules into `src/js/` using Vite ES Modules. All 5 phases completed (API client, CSS extraction, utilities, state management, UI modules). The modules work but the fundamental problem - 20,000+ lines in one HTML file with no component model - remained. This led to the Vue 3 migration decision.
 
-2. **Vite Build System**
-   - Installed Vite 7.3.1
-   - Created `vite.config.js` with API proxy to backend
-   - Added npm scripts: `dev`, `build`, `preview`
+### October 2025 Data Integrity Fixes
 
-3. **Module Structure Created**
-   ```
-   src/
-   ├── main.js                    # Bridge entry point
-   ├── css/main.css               # 4,471 lines extracted
-   └── js/
-       ├── api/client.js          # Centralized API (281 lines)
-       ├── core/config.js         # App configuration
-       ├── core/state.js          # Reactive state management
-       └── utils/
-           ├── formatters.js      # General utilities (209 lines)
-           └── project-helpers.js # Project helpers (408 lines)
-   ```
+- Performance trends chart, team utilization chart, and DashboardAPI export were all using hardcoded/fake data. Replaced with real database calculations.
+- Career Development section (hardcoded fake data) replaced with Team Performance Dashboard using real task/project data.
+- Database name mismatch (`APEX_DB` vs `APEX_PROD`) caused login failures. Resolved by recreating backend container with correct env var.
 
-4. **API Client Features**
-   - Automatic JWT token injection
-   - Request timeouts
-   - Centralized error handling
-   - Domain-specific endpoints (authApi, projectsApi, usersApi, adminApi)
+### September 2025 Features
 
-5. **Bug Fixes**
-   - Fixed `pool.close()` issue in ALL route files (auth.js, projects.js, users.js, admin.js, audit.js, room-status.js) that was closing database connections after each request
-
-**Total Lines Extracted:** ~5,369
-
-**Services Running:**
-- Vite Dev Server: http://localhost:5173
-- Node.js Backend: http://localhost:3000
-- nginx: http://localhost:80
-- SQL Server: localhost:1433
-
-**Local Dev Credentials:**
-- Admin: `admin@apex.local` / `***REDACTED-PASSWORD***`
-- Database: SA / ApexDemo2026Secure
-
-**Next Session:** Continue with Phase 3 (State Management migration)
+- Task attachments (mobile-optimized photo/document uploads)
+- Hierarchical subtasks with progress rollup
+- Security lockdown (removed all hardcoded credentials)
+- Project ID format changed from `proj-` to `WTB_` prefix
 
 ---
 
-### October 3, 2025 - Database Name Mismatch Resolution
-
-#### **🐛 Critical Issue: Login Failure Due to Database Configuration Mismatch**
-
-**Symptoms:**
-- Users unable to log in to APEX application
-- Backend returned: `Login failed for user 'sa'` with reason `Failed to open the explicitly specified database 'APEX_DB'`
-- All containers reported as "up" but authentication was broken
-
-**Root Cause Analysis:**
-
-1. **Database Name Discrepancy:**
-   - SQL Server database: `APEX_PROD` (created September 23, 2025)
-   - Backend container environment: `DB_DATABASE=APEX_PROD` (incorrect)
-   - **Timeline:** Backend container was recreated at some point without matching the SQL Server database name
-
-2. **Configuration File Conflicts Found:**
-   - `C:/DEV/.env` → Specifies `APEX_DB` (development config, not used)
-   - `C:/DEV/.env.production` → Specifies `APEX_PROD` (correct)
-   - `C:/DEV/node/.env` → Specifies `APEX_PROD` (correct) ✅
-   - `C:/DEV/docker-compose.yml` → Specifies `APEX_DB` (development config, not used)
-
-3. **Inconsistent Fallback Values in Code:**
-   - ❌ `node/db.js:9` → Falls back to `APEX_DB`
-   - ❌ `node/routes/auth.js:52` → Falls back to `APEX_DB`
-   - ❌ `node/routes/users.js:11` → Falls back to `APEX_DB`
-   - ✅ `node/routes/projects.js:11` → Falls back to `APEX_PROD`
-   - ✅ `node/routes/admin.js:11` → Falls back to `APEX_PROD`
-   - ✅ `node/routes/audit.js:11` → Falls back to `APEX_PROD`
-   - ✅ `node/routes/load-sample-data.js:11` → Falls back to `APEX_PROD`
-
-4. **How This Happened:**
-   - The backend container (`apex-node-prod`) was likely recreated manually at some point using an incorrect environment variable
-   - The `node/.env` file has the correct value (`APEX_PROD`), but the running container had been created with `-e DB_DATABASE=APEX_PROD`
-   - SQL Server logs show first login failure with `APEX_DB` on **September 30, 2025 at 20:22:12** and **20:24:41**
-   - Prior to September 30, backend was connecting successfully to `APEX_PROD`
-
-**Resolution Applied:**
-
-1. **Backend Container Recreated (October 3, 2025):**
-   ```bash
-   docker stop apex-node-prod
-   docker rm apex-node-prod
-   docker run -d --name apex-node-prod --network apex-network \
-     -e DB_USERNAME=SA -e DB_PASSWORD=ApexProd2024! \
-     -e DB_HOST=sqlserver-prod -e DB_PORT=1433 \
-     -e DB_DATABASE=APEX_PROD \  # ← CORRECTED
-     -e DISABLE_EMAIL=true \
-     -v "C:/DEV:/app" -p 3000:3000 \
-     node:18-alpine sh -c "cd /app/node && npm install --production && npm start"
-   ```
-
-2. **Admin User Recreated:**
-   - Backend connected successfully to `APEX_PROD`
-   - Registered new admin: `admin@apex.local` / `***REDACTED-PASSWORD***` (User ID: 3009)
-   - Login tested and verified working
-
-**Verification Complete:**
-- ✅ Backend connects to `APEX_PROD` database
-- ✅ No database connection errors in logs
-- ✅ Login API responds with valid JWT token
-- ✅ Public URL accessible: https://apex.daemonscripts.com
-- ✅ All containers running properly
-
-**⚠️ REMAINING ISSUES TO ADDRESS:**
-
-**Code Inconsistencies (NOT fixed in this session):**
-These files still have incorrect fallback values and should be updated in a future session:
-
-```javascript
-// node/db.js:9 - SHOULD BE FIXED
-database: process.env.DB_DATABASE || 'APEX_DB',  // ❌ Should be 'APEX_PROD'
-
-// node/routes/auth.js:52 - SHOULD BE FIXED
-database: process.env.DB_DATABASE || 'APEX_DB',  // ❌ Should be 'APEX_PROD'
-
-// node/routes/users.js:11 - SHOULD BE FIXED
-database: process.env.DB_DATABASE || 'APEX_DB',  // ❌ Should be 'APEX_PROD'
-```
-
-**Why Not Fixed Now:**
-- System is currently working because `node/.env` has the correct `DB_DATABASE=APEX_PROD`
-- The fallback values only matter if environment variable is missing
-- Changing code requires testing and backup
-- User requested documentation first, code fixes can follow
-
-**Prevention for Future:**
-1. **ALWAYS verify environment variables** when recreating containers
-2. **Check `node/.env` file** for correct database name before container creation
-3. **Use docker inspect** to verify container environment matches expectations
-4. **Test database connectivity** immediately after container recreation
-5. **Update fallback values in code** to match production database name
-
-**Key Lesson:** Even when all containers show "running", a configuration mismatch in environment variables can break authentication. Always verify the backend can actually connect to the database, not just that containers are up.
-
----
-
-### October 2, 2025 - Infrastructure Restructure: Portfolio Website & Subdomain Routing
-
-#### **✅ Complete Domain Architecture Redesign**
-
-**Goal:** Restructure daemonscripts.com as a portfolio/landing site with APEX moved to subdomain.
-
-**Changes Implemented:**
-
-1. **Portfolio Website Created**
-   - **File:** `C:\DEV\portfolio\index.html` (24,879 bytes)
-   - **Design:** Modern dark theme with gradient styling, fully responsive
-   - **Sections:** Hero, Philosophy (6 cards), Services, Portfolio showcase
-   - **APEX Card:** Live demo button, 8 features, 6 design highlights, tech stack badges
-   - **Tech:** Pure HTML/CSS/JS, no dependencies, mobile-first responsive design
-
-2. **Docker Container for Portfolio**
-   - **Container:** `daemonscripts-portfolio`
-   - **Image:** nginx:alpine
-   - **Port:** 8080
-   - **Volume:** `C:/DEV/portfolio:/usr/share/nginx/html`
-   - **Network:** apex-network
-
-3. **Cloudflare Tunnel Routing Updated**
-   - **Configuration Location:** Cloudflare Zero Trust Dashboard → "Public Hostnames" (NOT local config.yml)
-   - **Main domain:** daemonscripts.com → http://127.0.0.1:8080 (portfolio)
-   - **WWW subdomain:** www.daemonscripts.com → http://127.0.0.1:8080 (portfolio)
-   - **APEX subdomain:** apex.daemonscripts.com → http://127.0.0.1:80 (APEX app)
-   - **Future subdomain:** dpsrp.daemonscripts.com can be added when ready (port 8081)
-
-4. **Key Learning:**
-   - Cloudflare tunnel uses dashboard configuration when "Public Hostnames" are defined
-   - Local config.yml file is **ignored** when dashboard config exists
-   - Configuration changes in dashboard take effect immediately (no tunnel restart needed)
-   - Tunnel caching issue was resolved by updating dashboard routes instead of local config
-
-**Testing:**
-- ✅ https://daemonscripts.com returns HTTP 200 (portfolio site)
-- ✅ https://apex.daemonscripts.com returns HTTP 200 (APEX app)
-- ✅ Both sites fully accessible and functional
-
-**Files Created/Modified:**
-- Created: `C:\DEV\portfolio/index.html` (new portfolio website)
-- Modified: `C:\DEV\CLAUDE.md` (infrastructure documentation updates)
-- Modified: Cloudflare Zero Trust tunnel configuration (dashboard)
-
----
-
-### October 1, 2025 (Evening Session - Data Integrity Fixes)
-
-#### **✅ Data Integrity Guardian Audit Complete**
-**Issue:** User requested verification that all reporting features pull from real database data (no placeholders/mock data)
-
-**Findings:**
-- **3 Critical Issues Found** where reports used hardcoded/fake data instead of live database sources
-
-#### **✅ Issue #1: Performance Trends Chart - FIXED**
-**Location:** `generatePerformanceChartData()` function (index.html lines 11254-11320)
-**Problem:** Used `Math.random()` to generate fake monthly trends with misleading comment "Load historical data from database"
-**Fix Applied:** Replaced with real project data calculations:
-- **Progress mode:** Shows actual `project.progress` percentage per project
-- **Budget mode:** Calculates `(actualBudget / estimatedBudget) * 100` per project
-- **Timeline mode:** Calculates timeline accuracy from `startDate`, `endDate`, `completedDate` comparing planned vs actual duration
-- **Empty state:** Returns empty arrays when no projects exist (no fake data)
-
-**Data Source:** `AppState.projects` from `/api/projects` endpoint
-**Field Mapping:** Uses `estimatedBudget` or `budget` (with proper frontend→backend mapping)
-
-#### **✅ Issue #2: Team Utilization Chart - FIXED**
-**Location:** `renderTeamUtilizationChart()` function (index.html lines 12201-12278)
-**Problem:** Hardcoded fake team members: "John Smith", "Sarah Davis", "Mike Johnson", "Emily Brown", "David Wilson" with random workload percentages
-**Fix Applied:** Now uses real task assignments from projects:
-- Iterates through all `project.tasks` arrays
-- Extracts actual assignees from `task.assignee` field
-- Calculates workload as: `(active tasks / total tasks) * 100`
-- Shows "Unassigned" for tasks without assignee
-- **Empty state:** Returns empty arrays when no tasks/assignees exist
-
-**Data Source:** `AppState.projects` → `project.tasks[]` → `task.assignee`
-
-#### **✅ Issue #3: DashboardAPI Export - FIXED**
-**Location:** `generateReportData()` function (index.html lines 12572-12600, previously 12478-12511)
-**Problem:** Called `DashboardAPI.getMetrics()`, `DashboardAPI.getChartData()`, `DashboardAPI.getRecentProjects()` but `DashboardAPI` object didn't exist → threw `ReferenceError` breaking all exports
-**Fix Applied:** Created complete `DashboardAPI` wrapper object (index.html lines 12478-12570):
-
-```javascript
-const DashboardAPI = {
-    getMetrics: async function() {
-        // Loads AppState.projects if needed
-        // Calculates: totalProjects, completedProjects, inProgressProjects,
-        //   atRiskProjects, totalValue, utilization, totalTasks, completedTasks
-        // Returns metrics object with real data
-    },
-    getChartData: async function(chartType, period) {
-        // Uses generateStatusChartData(projects) for RAG status
-        // Returns status distribution or chart data based on type
-    },
-    getRecentProjects: async function(limit = 50) {
-        // Sorts projects by creation date (most recent first)
-        // Returns actual projects from AppState.projects
-    }
-};
-```
-
-**Data Source:** All methods call `loadProjectsFromBackend()` to ensure `AppState.projects` is populated, then use existing calculation functions
-
-**Result:** PDF/Excel/JSON export functionality now works with real data instead of throwing errors
-
-#### **✅ Career Development Section - REPLACED WITH TEAM PERFORMANCE DASHBOARD**
-**Location:** `renderCareerProgress()` function (index.html lines 13160-13382)
-
-**Problem Identified:**
-- Section called "🚀 Career Development Progress" with hardcoded fake data
-- Showed fake skills: "Project Management: 75%", "Technical Leadership: 60%" with made-up "+5", "+8" improvements
-- Showed fake achievements: "Successfully delivered 3 major projects", "Led team of 8 members", "Completed course" - all false
-- Showed generic advice: "Focus on Strategic Planning" with arbitrary "Target: 70% by end of quarter"
-- **Zero connection to actual project/task data**
-- User feedback: "This is PM software, not an HR platform"
-
-**Solution:** Complete replacement with real PM metrics dashboard
-
-**New: 📊 Team Performance Dashboard**
-
-**1. Team Work Stats Section (lines 13164-13218)**
-Calculates per team member from real data:
-- Tasks completed: Count where `task.status === 'completed'`
-- Active tasks: Count where `task.status !== 'completed'`
-- Projects: Unique project IDs per assignee
-- Projects delivered: Count where `project.status === 'completed'`
-- Average completion time: Days between `task.startDate` and `task.completedDate`
-- Budget variance: `((actualBudget - estimatedBudget) / estimatedBudget) * 100`
-
-**Data Sources:**
-- `task.assignee` - Team member identification
-- `task.status` - Task state
-- `task.startDate`, `task.completedDate` - Date calculations
-- `project.owner` or `project.projectManager` - Project ownership (**NOTE: These fields don't exist - see issues below**)
-- `project.estimatedBudget` or `project.budget` - Budget baseline
-- `project.actualBudget` - Actual spend
-
-**2. Upcoming Actions Due Section (lines 13220-13247)**
-Shows tasks approaching deadlines or overdue:
-- Filters tasks where `task.status !== 'completed'` AND due within 7 days
-- Calculates `daysUntilDue` from `task.dueDate` or `task.endDate` (**NOTE: Tasks only have endDate - see issues below**)
-- Sorts by due date ascending (earliest first)
-- Color coding:
-  - **Red:** Overdue (daysUntilDue < 0) or due today
-  - **Yellow:** Due in 1-3 days
-  - **Blue:** Due in 4-7 days
-- Shows: Task name, Project name, Assignee, Days until due
-
-**Purpose:** Helps team see approaching deadlines, helps stakeholders understand what's coming
-
-**3. Project Health Summary Section (lines 13249-13266)**
-Shows RAG status breakdown per team member:
-- Counts green/yellow/red projects per owner using `calculateProjectHealth(project)`
-- Calculates average progress percentage per owner
-- Uses existing `calculateProjectHealth()` function (lines 11356-11416)
-
-**Data Sources:**
-- `project.owner` or `project.projectManager` - Ownership (**NOTE: Don't exist - see issues below**)
-- `project.progress` - Progress percentage
-- `project.tasks[].ragStatus` - Task-level RAG status for rollup
-
-**Display:** Grid of cards showing Green/Yellow/Red counts and average progress per person
-
-#### **⚠️ CRITICAL ISSUE IDENTIFIED: Missing Database Fields**
-
-**Data Integrity Guardian Investigation Results:**
-
-**Database Schema Analysis (from node/routes/projects.js lines 61-83):**
-
-**PROJECTS TABLE - Fields That Exist:**
-```
-✅ id, name, client, type, status, budget, actualBudget
-✅ startDate, endDate, description, tasks (JSON array)
-✅ requestorInfo, siteLocation, businessLine, progress
-✅ priority, requestDate, dueDate, estimatedBudget
-✅ costCenter, purchaseOrder, parent_project_id
-✅ created_at, updated_at
-```
-
-**PROJECTS TABLE - Fields That DON'T Exist:**
-```
-❌ owner - Not in database
-❌ projectManager - Not in database
-❌ createdBy - Not in database
-❌ assignedTo - Not in database
-```
-
-**TASKS (JSON within Projects) - Fields That Exist:**
-```
-✅ id, name, description, status, ragStatus, phase
-✅ priority, assignee, estimatedHours, actualHours
-✅ startDate, endDate, completedDate, notes
-✅ fieldOperationsRequired, parentTaskId, subtasks
-✅ notesThread, createdAt, updatedAt
-```
-
-**TASKS - Fields That DON'T Exist:**
-```
-❌ dueDate - Not used (tasks use endDate instead)
-❌ assignedTo - Not used (tasks use assignee instead)
-```
-
-**Impact:** Team Performance Dashboard will show all metrics under "Unassigned" because it's looking for `project.owner`/`project.projectManager` fields that don't exist.
-
-**Recommended Field Mapping (TO BE APPLIED TOMORROW):**
-```javascript
-// Current code (WRONG):
-const owner = project.owner || project.projectManager || 'Unassigned';
-const dueDate = task.dueDate || task.endDate;
-const assignee = task.assignee || task.assignedTo || 'Unassigned';
-
-// Should be (CORRECT):
-const owner = project.requestorInfo || 'Unassigned';  // Use requestorInfo as proxy for owner
-const dueDate = task.endDate;  // Tasks only have endDate
-const assignee = task.assignee || 'Unassigned';  // Tasks only have assignee
-```
-
-**Code Changes Required (PENDING):**
-- **Line 13169:** Remove `task.assignedTo` fallback
-- **Line 13196:** Change to `project.requestorInfo`
-- **Line 13228:** Change to just `task.endDate`
-- **Line 13252:** Change to `project.requestorInfo`
-
-**Long-term Database Schema Recommendations:**
-```sql
-ALTER TABLE Projects ADD createdBy INT FOREIGN KEY REFERENCES Users(id);
-ALTER TABLE Projects ADD projectManager INT FOREIGN KEY REFERENCES Users(id);
-ALTER TABLE Projects ADD owner INT FOREIGN KEY REFERENCES Users(id);
-```
-
-#### **Files Modified Today:**
-- `C:\DEV\index.html` - All reporting fixes and Team Performance Dashboard
-- Backup: `G:\My Drive\APEX Backups\index_backup_20251001_[timestamp].html`
-
-#### **Testing Status:**
-- ✅ DashboardAPI object created successfully (no JavaScript errors)
-- ✅ Performance trends chart restored and fixed
-- ✅ Team utilization chart fixed
-- ✅ Team Performance Dashboard built and deployed
-- ⚠️ **UNTESTED:** All features require browser verification with real data
-- ⚠️ **KNOWN ISSUE:** Dashboard shows "Unassigned" until field mapping is fixed (pending tomorrow)
-
-#### **Next Session Tasks:**
-1. Apply field mapping fixes (4 line changes)
-2. Verify Team Performance Dashboard shows real team member data
-3. Test with actual projects/tasks in browser
-4. Consider adding database schema fields for proper ownership tracking
-
----
-
-### October 1, 2025 (Earlier - Documentation)
-- **Documentation cleanup:** Restructured CLAUDE.md to reduce confusion about tunnel status
-- **Lesson learned:** Historical log errors don't mean current system is broken - test first before diagnosing
-
-### September 30, 2025 (PM)
-- **✅ Task Attachments Feature:** Mobile-optimized photo/document uploads
-  - Backend: Added multer, /api/attachments route, file storage in /app/uploads/tasks/
-  - Frontend: Camera access on mobile, 10MB file limit, JPG/PNG/PDF support
-  - Files: index.html updated, node/routes/attachments.js created
-
-### September 30, 2025 (AM)
-- **✅ Date Change Bug Fix:** Fixed duplicate ID `editProjectStatus` causing form submission failure
-- **✅ Console Cleanup:** Commented out 9 debug console.log statements
-
-### September 29, 2025
-- **✅ Advanced Subtask Features:** Progress rollup display, hours aggregation, RAG status bubbling
-- **✅ Comprehensive Testing:** Backend API, data storage, JavaScript logic, HTML structure
-
-### September 23, 2025
-- **✅ Login Screen Cleanup:** Removed test JS auto-fill code, removed "Offline Mode" message
-- **✅ fetchWithTimeout Fix:** Fixed AbortError bug
-
-### September 19, 2025
-- **✅ Major Security Lockdown:** Removed all hardcoded credentials and test accounts
-- **✅ Project ID Fix:** Changed from `proj-` to `WTB_` prefix
-- **✅ Email Service Fix:** Changed createTransporter to createTransport
-- **✅ Hierarchical Subtasks:** Complete subtask management system with unlimited nesting
-
----
-
-## 📁 CRITICAL FILE LOCATIONS
-
-### Core Files
-- `C:\DEV\index.html` - Entire frontend (18,000+ lines)
-- `C:\DEV\node/routes/projects.js` - Project API with WTB_ filter (line 53)
-- `C:\DEV\node/routes/auth.js` - Authentication
-- `C:\DEV\node/routes/attachments.js` - File uploads
-- `C:\DEV\nginx-simple.conf` - nginx configuration
-
-### Backups
-- `G:\My Drive\APEX Backups\` - All code backups with timestamps
-
-### Documentation
-- `APEX_DOCUMENTATION.md` - User documentation
-- `SECURITY_EVALUATION.md` - Security audit
-
----
-
-## 🔍 TROUBLESHOOTING QUICK REFERENCE
-
-### "502 Bad Gateway"
-- **Cause:** Backend container down
-- **Fix:** `docker restart apex-node-prod && docker restart apex-nginx-prod`
-
-### "Projects Not Showing in List"
-- **Cause:** Project ID doesn't start with `WTB_`
-- **Fix:** Ensure frontend generates IDs as `WTB_${timestamp}_${random}`
-
-### "Login Failing"
-- **Cause:** Wrong credentials or password expired (60-day policy)
-- **Fix:** Use database credentials only, password reset if expired
-
-### "Tunnel Down" (HTTP 530)
-- **Cause:** Cloudflared process stopped
-- **Fix:** Restart cloudflared: `"C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel run daemonscripts-apex`
-
-### "Changes Not Showing"
-- **Cause:** Browser cache or nginx cache
-- **Fix:** Hard refresh (Ctrl+F5) or `docker restart apex-nginx-prod`
-
----
-
-## 🚫 DO NOT
-
-- Change project ID format without updating backend filter
-- Add hardcoded credentials or test accounts
-- Assume tunnel is down based on historical log errors
-- Make multiple simultaneous changes
-- Claim something is fixed without testing
-
----
-
-## ✅ ALWAYS
-
-- Test changes yourself before claiming completion
-- Check current state with curl/docker commands before diagnosing
-- Back up to `G:\My Drive\APEX Backups` before code changes
-- Verify projects use WTB_ prefix
-- Look at log timestamps (old errors ≠ current problems)
-
----
-
-## 🐳 CONTAINER ARCHITECTURE & EMERGENCY PROCEDURES
-
-### System Architecture
-```
-Internet → Cloudflared Tunnel → nginx (port 80) → Node.js (port 3000) → SQL Server (port 1433)
-```
-
-### Complete System Recovery
-If all containers are down:
-
-```bash
-# 1. Check if containers exist
-docker ps -a | findstr apex
-
-# 2. Start existing containers
-docker start sqlserver-prod
-docker start apex-node-prod
-docker start apex-nginx-prod
-
-# 3. If containers don't exist, recreate (SQL first, then node, then nginx)
-# SQL Server
-docker run -d --name sqlserver-prod --network apex-network \
-  -e ACCEPT_EULA=Y -e SA_PASSWORD=ApexProd2024! -p 1433:1433 \
-  mcr.microsoft.com/mssql/server:2019-latest
-
-# Node Backend
-docker run -d --name apex-node-prod --network apex-network \
-  -e DB_USERNAME=SA -e DB_PASSWORD=ApexProd2024! \
-  -e DB_HOST=sqlserver-prod -e DB_PORT=1433 \
-  -e DB_DATABASE=APEX_PROD -e DISABLE_EMAIL=true \
-  -v "C:/DEV:/app" -p 3000:3000 \
-  node:18-alpine sh -c "cd /app/node && npm install --production && npm start"
-
-# Nginx Frontend
-docker run -d --name apex-nginx-prod --network apex-network \
-  -p 80:80 \
-  -v "C:/DEV:/usr/share/nginx/html" \
-  -v "C:/DEV/nginx-simple.conf:/etc/nginx/nginx.conf" \
-  nginx:alpine
-```
-
-### Database Recovery
-If database loses data:
-
-```bash
-# Connect to SQL Server
-docker exec -it sqlserver-prod /opt/mssql-tools/bin/sqlcmd -S localhost -U SA -P 'ApexProd2024!'
-
-# Create database and tables (run SQL commands)
-CREATE DATABASE APEX_PROD;
-GO
-USE APEX_PROD;
-GO
-CREATE TABLE Users (
-    id INT IDENTITY(1,1) PRIMARY KEY,
-    name NVARCHAR(255) NOT NULL,
-    email NVARCHAR(255) UNIQUE NOT NULL,
-    password NVARCHAR(255) NOT NULL,
-    role NVARCHAR(50) DEFAULT 'user',
-    preferences NVARCHAR(MAX),
-    avatar NVARCHAR(MAX),
-    created_at DATETIME DEFAULT GETDATE(),
-    updated_at DATETIME DEFAULT GETDATE()
-);
-GO
-
-# Create admin user (password: ***REDACTED-PASSWORD***)
-INSERT INTO Users (name, email, password, role) VALUES (
-    'Super Admin',
-    'admin@apex.local',
-    '$2b$12$7vBgE.p9xD8qH3K2fA9nC.Vx8wR5tL6mP2qN9sQ1uY3eI7oU4kM8a',
-    'superadmin'
-);
-GO
-```
-
----
-
-## 📚 SYSTEM REFERENCE
-
-### Application Architecture
-- **Single-file application:** index.html contains all HTML/CSS/JavaScript
-- **Backend:** Node.js/Express with JWT authentication
-- **Database:** Microsoft SQL Server
-- **External Dependencies:** CDN-loaded (Chart.js, XLSX, jsPDF, SortableJS)
-
-### User Roles
-- **Superadmin/Admin/Owner/Root:** Full access including administration
-- **Project Manager:** Project management capabilities
-- **Field Ops:** Field operations access
-- **Auditor:** Read-only access
-
-### Project Phase System
-- Phase 1: Pre-installation - Logistics
-- Phase 2: Pre-Installation - AV Setup
-- Phase 3: Post-Installation Commissioning
-- Phase 4: Post-Installation - Logistics
-
-### API Endpoints
-- `/api/auth/*` - Authentication
-- `/api/projects/*` - Project management
-- `/api/attachments/*` - File uploads
-- `/api/admin/*` - Admin operations
-
-### Environment Variables (Backend)
-```
-DB_USERNAME=SA
-DB_PASSWORD=ApexProd2024!
-DB_HOST=sqlserver-prod
-DB_PORT=1433
-DB_DATABASE=APEX_PROD
-JWT_SECRET=your-jwt-secret-here
-DISABLE_EMAIL=true
-```
-
----
-
-*Last updated: January 27, 2026*
-
----
-
-## 📋 SESSION CONTINUITY NOTES
-
-When resuming work on this project:
-
-1. **Check running services:**
-   ```bash
-   curl http://localhost:3000/health  # Backend
-   curl http://localhost:5173/        # Vite dev server
-   sg docker -c 'docker ps'           # Docker containers
-   ```
-
-2. **Start services if needed:**
-   ```bash
-   # Backend
-   export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-   cd /home/daemonalex/projects/apex-platform/node && node server.js &
-
-   # Vite
-   cd /home/daemonalex/projects/apex-platform && npm run dev &
-
-   # Docker (SQL Server + nginx)
-   sg docker -c 'docker start apex-sqlserver apex-nginx'
-   ```
-
-3. **Current migration phase:** Phase 2 complete, ready for Phase 3 (State Management)
-
-4. **Key principle:** "Strangler Fig" - new modules run alongside legacy code via `window.*` exposure
-
-- NEVER ASK ME TO DO AN ACTION THAT YOU CAN DO YOURSELF
+*Last updated: 2026-03-29*

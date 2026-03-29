@@ -20,9 +20,11 @@ const adminRoutes = require('./routes/admin');
 const attachmentsRoutes = require('./routes/attachments');
 const loadSampleRoutes = require('./routes/load-sample-data');
 const roomStatusRoutes = require('./routes/room-status');
-// const fieldopsRoutes = require('./routes/fieldops');
-// const metricsRoutes = require('./routes/metrics');
-// const insightsRoutes = require('./routes/insights');
+const fieldopsRoutes = require('./routes/fieldops');
+const reportsRoutes = require('./routes/reports');
+const contactsRoutes = require('./routes/contacts');
+const meetingsRoutes = require('./routes/meetings');
+const documentsRoutes = require('./routes/documents');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -75,7 +77,7 @@ const authLimiter = rateLimit({
 
 // CORS configuration
 app.use(cors({
-  origin: process.env.FRONTEND_URL || ['http://localhost', 'http://localhost:80', 'https://daemonscripts.com'],
+  origin: process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',') : ['http://localhost', 'http://localhost:80', 'https://daemonscripts.com'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-auth-token']
@@ -109,9 +111,11 @@ app.use('/api/admin', authenticateToken, requireRole(['admin', 'superadmin', 'ow
 app.use('/api/attachments', authenticateToken, attachmentsRoutes);
 app.use('/api/migrate', authenticateToken, requireRole(['admin', 'superadmin']), loadSampleRoutes);
 app.use('/api/room-status', authenticateToken, roomStatusRoutes);
-// app.use('/api/fieldops', fieldopsRoutes);
-// app.use('/metrics', metricsRoutes);
-// app.use('/insights', insightsRoutes);
+app.use('/api/fieldops', authenticateToken, fieldopsRoutes);
+app.use('/api/reports', authenticateToken, reportsRoutes);
+app.use('/api/contacts', authenticateToken, contactsRoutes);
+app.use('/api/meetings', authenticateToken, meetingsRoutes);
+app.use('/api/documents', authenticateToken, documentsRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

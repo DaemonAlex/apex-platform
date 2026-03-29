@@ -736,4 +736,133 @@ router.post('/cleanup-users', auditLog('Admin: cleanup users', 'admin', 'critica
   }
 });
 
+// ==================== DATABASE CONFIG ====================
+
+// GET /api/admin/db/config - Retrieve stored DB config
+router.get('/db/config', async (req, res) => {
+  try {
+    const result = await pool.query("SELECT value FROM AppConfig WHERE key = 'db_config'");
+    if (result.rows.length === 0) {
+      return res.json({ dialect: 'mariadb', host: 'localhost', port: 3306, database: '', user: '', password: '' });
+    }
+    const config = result.rows[0].value;
+    // Mask password in response
+    res.json({ ...config, password: config.password ? '********' : '' });
+  } catch (error) {
+    logger.error('Get DB config error', { error: error.message });
+    res.status(500).json({ error: 'Failed to load database configuration' });
+  }
+});
+
+// PUT /api/admin/db/config - Save DB config
+router.put('/db/config',
+  auditLog('Admin: updated database config', 'admin', 'warning'),
+  async (req, res) => {
+  try {
+    const { dialect, host, port, database, user, password } = req.body;
+    if (!host || !database || !user) {
+      return res.status(400).json({ error: 'Host, database, and user are required' });
+    }
+
+    // Load existing config to preserve password if masked
+    let finalPassword = password;
+    if (password === '********') {
+      const existing = await pool.query("SELECT value FROM AppConfig WHERE key = 'db_config'");
+      if (existing.rows.length > 0) {
+        finalPassword = existing.rows[0].value.password || '';
+      }
+    }
+
+    const config = { dialect: dialect || 'mariadb', host, port: parseInt(port) || 3306, database, user, password: finalPassword };
+
+    await pool.query(
+      "INSERT INTO AppConfig (key, value) VALUES ('db_config', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()",
+      [JSON.stringify(config)]
+    );
+
+    logger.info('DB config saved', { dialect: config.dialect, host: config.host, database: config.database, savedBy: req.user?.email });
+    res.json({ message: 'Database configuration saved' });
+  } catch (error) {
+    logger.error('Save DB config error', { error: error.message });
+    res.status(500).json({ error: 'Failed to save database configuration' });
+  }
+});
+
+// POST /api/admin/db/test - Test database connection
+router.post('/db/test', async (req, res) => {
+  try {
+    const { dialect, host, port, database, user, password } = req.body;
+    if (!host || !database || !user) {
+      return res.status(400).json({ success: false, message: 'Host, database, and user are required' });
+    }
+
+    // Resolve password if masked
+    let testPassword = password;
+    if (password === '********') {
+      const existing = await pool.query("SELECT value FROM AppConfig WHERE key = 'db_config'");
+      if (existing.rows.length > 0) testPassword = existing.rows[0].value.password || '';
+    }
+
+    if (dialect === 'mariadb' || dialect === 'mysql') {
+      let mysql;
+      try { mysql = require('mysql2/promise'); } catch {
+        return res.json({ success: false, message: 'mysql2 driver not installed. Run: npm install mysql2' });
+      }
+      const conn = await mysql.createConnection({ host, port: parseInt(port) || 3306, database, user, password: testPassword, connectTimeout: 5000 });
+      const [rows] = await conn.execute('SELECT 1 as ok');
+      await conn.end();
+      res.json({ success: true, message: `Connected to MariaDB at ${host}:${port || 3306}/${database}` });
+    } else if (dialect === 'mssql') {
+      res.json({ success: false, message: 'SQL Server connection test not implemented' });
+    } else {
+      res.json({ success: false, message: 'Unsupported dialect: ' + dialect });
+    }
+  } catch (error) {
+    logger.error('DB test error', { error: error.message });
+    res.json({ success: false, message: error.message || 'Connection failed' });
+  }
+});
+
+// POST /api/admin/db/create-mariadb-user - Create a limited MariaDB user
+router.post('/db/create-mariadb-user',
+  auditLog('Admin: created MariaDB user', 'admin', 'critical'),
+  async (req, res) => {
+  try {
+    const { rootUser, rootPassword, newUser, newPassword } = req.body;
+    if (!rootUser || !rootPassword || !newUser || !newPassword) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+
+    let mysql;
+    try { mysql = require('mysql2/promise'); } catch {
+      return res.status(500).json({ error: 'mysql2 driver not installed. Run: npm install mysql2' });
+    }
+
+    // Load saved DB config for host/port/database
+    const configResult = await pool.query("SELECT value FROM AppConfig WHERE key = 'db_config'");
+    const dbConfig = configResult.rows[0]?.value || { host: 'localhost', port: 3306, database: '' };
+
+    const conn = await mysql.createConnection({
+      host: dbConfig.host || 'localhost',
+      port: dbConfig.port || 3306,
+      user: rootUser,
+      password: rootPassword,
+      connectTimeout: 5000,
+    });
+
+    // Create user and grant access to the configured database
+    const dbName = dbConfig.database || 'apex';
+    await conn.execute(`CREATE USER IF NOT EXISTS ?@'localhost' IDENTIFIED BY ?`, [newUser, newPassword]);
+    await conn.execute(`GRANT SELECT, INSERT, UPDATE, DELETE ON \`${dbName}\`.* TO ?@'localhost'`, [newUser]);
+    await conn.execute('FLUSH PRIVILEGES');
+    await conn.end();
+
+    logger.info('MariaDB user created', { newUser, database: dbName, createdBy: req.user?.email });
+    res.json({ message: `User '${newUser}' created with access to '${dbName}'` });
+  } catch (error) {
+    logger.error('Create MariaDB user error', { error: error.message });
+    res.status(500).json({ error: error.message || 'Failed to create MariaDB user' });
+  }
+});
+
 module.exports = router;

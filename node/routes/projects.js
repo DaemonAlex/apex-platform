@@ -5,6 +5,37 @@ const { auditLog } = require('../middleware/audit');
 const { validate, body, param } = require('../middleware/validate');
 const router = express.Router();
 
+// Map PostgreSQL lowercase columns to camelCase for frontend compatibility
+function mapProjectRow(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    client: row.client,
+    type: row.type,
+    status: row.status,
+    budget: row.budget,
+    actualBudget: row.actualbudget,
+    startDate: row.startdate,
+    endDate: row.enddate,
+    description: row.description,
+    tasks: row.tasks ? (typeof row.tasks === 'string' ? JSON.parse(row.tasks) : row.tasks) : [],
+    requestorInfo: row.requestorinfo,
+    siteLocation: row.sitelocation,
+    businessLine: row.businessline,
+    progress: row.progress,
+    priority: row.priority,
+    requestDate: row.requestdate,
+    dueDate: row.duedate,
+    estimatedBudget: row.estimatedbudget,
+    costCenter: row.costcenter,
+    purchaseOrder: row.purchaseorder,
+    parentProjectId: row.parent_project_id,
+    locationId: row.location_id || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
 // Validation chains for projects
 const projectValidation = [
   body('id').trim().notEmpty().withMessage('Project ID is required')
@@ -134,14 +165,90 @@ router.get('/', async (req, res) => {
   try {
     await initializeProjectsTable();
 
-    const result = await pool.query("SELECT * FROM Projects WHERE id LIKE 'WTB_%' ORDER BY created_at DESC");
+    const { page, limit, status, type, businessLine, search, location_id, sort, order, summary } = req.query;
 
-    const projects = result.rows.map(project => ({
-      ...project,
-      tasks: project.tasks ? (typeof project.tasks === 'string' ? JSON.parse(project.tasks) : project.tasks) : []
-    }));
+    // If no pagination params, return all (backward compat with monolith)
+    if (!page && !summary) {
+      const result = await pool.query("SELECT * FROM Projects ORDER BY created_at DESC");
+      return res.json({ projects: result.rows.map(mapProjectRow) });
+    }
 
-    res.json({ projects });
+    // Paginated query with filters
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(limit) || 25));
+    const offset = (pageNum - 1) * pageSize;
+
+    const conditions = ['parent_project_id IS NULL'];
+    const params = [];
+    let paramIdx = 1;
+
+    if (status) { conditions.push(`status = $${paramIdx++}`); params.push(status); }
+    if (type) { conditions.push(`type = $${paramIdx++}`); params.push(type); }
+    if (businessLine) { conditions.push(`businessline = $${paramIdx++}`); params.push(businessLine); }
+    if (location_id) { conditions.push(`location_id = $${paramIdx++}`); params.push(parseInt(location_id)); }
+    if (search) {
+      conditions.push(`(name ILIKE $${paramIdx} OR sitelocation ILIKE $${paramIdx} OR description ILIKE $${paramIdx})`);
+      params.push(`%${search}%`);
+      paramIdx++;
+    }
+
+    const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
+    // Sort
+    const sortableColumns = { name: 'name', status: 'status', type: 'type', dueDate: 'duedate', progress: 'progress', budget: 'estimatedbudget', priority: 'priority', created: 'created_at' };
+    const sortCol = sortableColumns[sort] || 'created_at';
+    const sortDir = order === 'asc' ? 'ASC' : 'DESC';
+
+    // Count total
+    const countResult = await pool.query(`SELECT COUNT(*) as total FROM Projects ${where}`, params);
+    const total = parseInt(countResult.rows[0].total);
+
+    // Fetch page - exclude tasks JSONB for performance (summary mode)
+    const selectCols = summary === 'true'
+      ? 'id, name, type, status, budget, actualbudget, estimatedbudget, progress, priority, sitelocation, businessline, duedate, startdate, location_id, created_at, updated_at'
+      : '*';
+
+    const result = await pool.query(
+      `SELECT ${selectCols} FROM Projects ${where} ORDER BY ${sortCol} ${sortDir} LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
+      [...params, pageSize, offset]
+    );
+
+    const projects = result.rows.map(row => {
+      const mapped = {
+        id: row.id,
+        name: row.name,
+        type: row.type,
+        status: row.status,
+        budget: row.budget,
+        actualBudget: row.actualbudget,
+        estimatedBudget: row.estimatedbudget,
+        progress: row.progress,
+        priority: row.priority,
+        siteLocation: row.sitelocation,
+        businessLine: row.businessline,
+        dueDate: row.duedate,
+        startDate: row.startdate,
+        locationId: row.location_id,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
+      // Include tasks only if not summary mode
+      if (row.tasks !== undefined) {
+        mapped.tasks = typeof row.tasks === 'string' ? JSON.parse(row.tasks) : (row.tasks || []);
+        mapped.taskCount = mapped.tasks.length;
+      }
+      return mapped;
+    });
+
+    res.json({
+      projects,
+      pagination: {
+        page: pageNum,
+        limit: pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      }
+    });
   } catch (error) {
     logger.error('Get projects error', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch projects', details: error.message });
@@ -157,8 +264,7 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const project = result.rows[0];
-    project.tasks = project.tasks ? (typeof project.tasks === 'string' ? JSON.parse(project.tasks) : project.tasks) : [];
+    const project = mapProjectRow(result.rows[0]);
 
     res.json(project);
     // pool kept open
@@ -172,11 +278,11 @@ router.get('/:id', async (req, res) => {
 router.get('/:id/children', async (req, res) => {
   try {
     const result = await pool.query(
-      "SELECT * FROM Projects WHERE parent_project_id = $1 AND id LIKE 'WTB_%' ORDER BY created_at DESC",
+      "SELECT * FROM Projects WHERE parent_project_id = $1 ORDER BY created_at DESC",
       [req.params.id]
     );
 
-    const projects = result.rows.map(project => ({
+    const projects = result.rows.map(mapProjectRow).map(project => ({
       ...project,
       tasks: project.tasks ? (typeof project.tasks === 'string' ? JSON.parse(project.tasks) : project.tasks) : []
     }));
@@ -239,54 +345,58 @@ router.post('/',
   }
 });
 
-// Update project
+// Update project (partial updates supported)
 router.put('/:id',
-  validate(projectUpdateValidation),
   async (req, res) => {
   try {
-    const { name, client, type, status, budget, actualBudget, startDate, endDate, description, tasks,
-            requestorInfo, siteLocation, businessLine, progress, priority, requestDate, dueDate,
-            estimatedBudget, costCenter, purchaseOrder, parent_project_id } = req.body;
+    const updates = req.body;
+    const fieldMap = {
+      name: 'name', client: 'client', type: 'type', status: 'status',
+      budget: 'budget', actualBudget: 'actualbudget', estimatedBudget: 'estimatedbudget',
+      startDate: 'startdate', endDate: 'enddate', dueDate: 'duedate',
+      description: 'description', tasks: 'tasks',
+      requestorInfo: 'requestorinfo', siteLocation: 'sitelocation',
+      businessLine: 'businessline', progress: 'progress', priority: 'priority',
+      requestDate: 'requestdate', costCenter: 'costcenter', purchaseOrder: 'purchaseorder',
+      parent_project_id: 'parent_project_id', locationId: 'location_id',
+    };
 
-    const result = await pool.query(`
-      UPDATE Projects
-      SET name = $1, client = $2, type = $3, status = $4,
-          budget = $5, actualBudget = $6, startDate = $7,
-          endDate = $8, description = $9, tasks = $10,
-          requestorInfo = $11, siteLocation = $12, businessLine = $13,
-          progress = $14, priority = $15, requestDate = $16, dueDate = $17,
-          estimatedBudget = $18, costCenter = $19, purchaseOrder = $20,
-          parent_project_id = $21,
-          updated_at = NOW()
-      WHERE id = $22
-      RETURNING *
-    `, [
-      name, client || '', type || '', status || 'planning',
-      budget || 0, actualBudget || 0,
-      startDate ? new Date(startDate) : null, endDate ? new Date(endDate) : null,
-      description || '', JSON.stringify(tasks || []),
-      requestorInfo || '', siteLocation || '', businessLine || '',
-      progress || 0, priority || '',
-      requestDate ? new Date(requestDate) : null, dueDate ? new Date(dueDate) : null,
-      estimatedBudget || 0, costCenter || '', purchaseOrder || '',
-      parent_project_id || null,
-      req.params.id
-    ]);
+    const setClauses = [];
+    const values = [];
+    let idx = 1;
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Project not found' });
+    for (const [jsKey, dbCol] of Object.entries(fieldMap)) {
+      if (jsKey in updates) {
+        let val = updates[jsKey];
+        // Handle special types
+        if (dbCol === 'tasks' && val) val = JSON.stringify(val);
+        if (['startdate','enddate','duedate','requestdate'].includes(dbCol) && val) val = new Date(val);
+        setClauses.push(`${dbCol} = $${idx}`);
+        values.push(val);
+        idx++;
+      }
     }
 
-    const project = result.rows[0];
-    project.tasks = typeof project.tasks === 'string' ? JSON.parse(project.tasks) : project.tasks;
+    if (setClauses.length === 0) return res.status(400).json({ error: 'No valid fields to update' });
 
-    // If this is a location (has parent_project_id), update parent rollups
-    if (parent_project_id) {
-      await updateParentProjectRollups(parent_project_id);
+    setClauses.push('updated_at = NOW()');
+    values.push(req.params.id);
+
+    const result = await pool.query(
+      `UPDATE Projects SET ${setClauses.join(', ')} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Project not found' });
+
+    const project = mapProjectRow(result.rows[0]);
+
+    // Update parent rollups if needed
+    if (project.parentProjectId) {
+      await updateParentProjectRollups(project.parentProjectId);
     }
 
     res.json({ project });
-    // pool kept open
   } catch (error) {
     logger.error('Update project error', { error: error.message, projectId: req.params.id });
     res.status(500).json({ error: 'Failed to update project', details: error.message });
@@ -402,6 +512,8 @@ router.post('/:projectId/time-entry', async (req, res) => {
     res.status(500).json({ error: 'Failed to add time entry', details: error.message });
   }
 });
+
+
 
 // Update specific task in project
 router.put('/:projectId/tasks/:taskId', async (req, res) => {
@@ -596,5 +708,180 @@ async function updateParentProjectRollups(parentProjectId) {
     logger.error('Update parent rollups error', { error: error.message, parentProjectId });
   }
 }
+
+// ==================== PROJECT NOTES ====================
+
+// GET /api/projects/:projectId/notes - Dated notes for a project
+router.get('/:projectId/notes', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM ProjectNotes WHERE project_id = $1 ORDER BY created_at DESC',
+      [req.params.projectId]
+    );
+    res.json({
+      notes: result.rows.map(r => ({
+        id: r.id, projectId: r.project_id, author: r.author,
+        content: r.content, createdAt: r.created_at,
+      }))
+    });
+  } catch (error) {
+    logger.error('Error fetching project notes', { error: error.message });
+    res.status(500).json({ error: 'Failed to fetch notes' });
+  }
+});
+
+// POST /api/projects/:projectId/notes - Add a dated note
+router.post('/:projectId/notes', async (req, res) => {
+  try {
+    const { content } = req.body;
+    if (!content?.trim()) return res.status(400).json({ error: 'Content is required' });
+    const author = req.user?.name || req.user?.email || 'Unknown';
+
+    const result = await pool.query(
+      'INSERT INTO ProjectNotes (project_id, author, content) VALUES ($1, $2, $3) RETURNING *',
+      [req.params.projectId, author, content.trim()]
+    );
+    res.status(201).json({ note: result.rows[0] });
+  } catch (error) {
+    logger.error('Error creating project note', { error: error.message });
+    res.status(500).json({ error: 'Failed to create note' });
+  }
+});
+
+// DELETE /api/projects/:projectId/notes/:noteId
+router.delete('/:projectId/notes/:noteId', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM ProjectNotes WHERE id = $1 AND project_id = $2', [req.params.noteId, req.params.projectId]);
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Error deleting note', { error: error.message });
+    res.status(500).json({ error: 'Failed to delete note' });
+  }
+});
+
+// ==================== SITE VISITS ====================
+
+// GET /api/projects/:projectId/visits
+router.get('/:projectId/visits', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM SiteVisits WHERE project_id = $1 ORDER BY visit_date DESC',
+      [req.params.projectId]
+    );
+    res.json({
+      visits: result.rows.map(r => ({
+        id: r.id, projectId: r.project_id, visitor: r.visitor,
+        visitDate: r.visit_date, purpose: r.purpose, summary: r.summary,
+        ticketNumber: r.ticket_number, createdAt: r.created_at,
+      }))
+    });
+  } catch (error) {
+    logger.error('Error fetching site visits', { error: error.message });
+    res.status(500).json({ error: 'Failed to fetch visits' });
+  }
+});
+
+// POST /api/projects/:projectId/visits
+router.post('/:projectId/visits', async (req, res) => {
+  try {
+    const { visitor, visitDate, purpose, summary, ticketNumber } = req.body;
+    if (!visitor?.trim() || !visitDate) return res.status(400).json({ error: 'visitor and visitDate are required' });
+
+    const result = await pool.query(
+      `INSERT INTO SiteVisits (project_id, visitor, visit_date, purpose, summary, ticket_number)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [req.params.projectId, visitor.trim(), new Date(visitDate),
+       purpose?.trim() || null, summary?.trim() || null, ticketNumber?.trim() || null]
+    );
+    res.status(201).json({ visit: result.rows[0] });
+  } catch (error) {
+    logger.error('Error creating site visit', { error: error.message });
+    res.status(500).json({ error: 'Failed to create visit' });
+  }
+});
+
+// DELETE /api/projects/:projectId/visits/:visitId
+router.delete('/:projectId/visits/:visitId', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM SiteVisits WHERE id = $1 AND project_id = $2', [req.params.visitId, req.params.projectId]);
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Error deleting visit', { error: error.message });
+    res.status(500).json({ error: 'Failed to delete visit' });
+  }
+});
+
+// ==================== PROJECT ROOMS ====================
+
+// GET /api/projects/:projectId/rooms - Rooms linked to a project
+router.get('/:projectId/rooms', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT pr.id as link_id, pr.notes as link_notes, pr.created_at as linked_at,
+             r.room_id, r.name, r.room_type, r.capacity,
+             r.location_id, r.floor_id,
+             l.name as location_name,
+             f.name as floor_name
+      FROM ProjectRooms pr
+      JOIN Rooms r ON r.room_id = pr.room_id
+      LEFT JOIN Locations l ON l.id = r.location_id
+      LEFT JOIN Floors f ON f.id = r.floor_id
+      WHERE pr.project_id = $1
+      ORDER BY l.name, f.name, r.name
+    `, [req.params.projectId]);
+
+    res.json({
+      rooms: result.rows.map(r => ({
+        linkId: r.link_id,
+        roomId: r.room_id,
+        name: r.name,
+        roomType: r.room_type,
+        capacity: r.capacity,
+        location: r.location_name,
+        floor: r.floor_name,
+        notes: r.link_notes,
+        linkedAt: r.linked_at,
+      }))
+    });
+  } catch (error) {
+    logger.error('Error fetching project rooms', { error: error.message });
+    res.status(500).json({ error: 'Failed to fetch project rooms' });
+  }
+});
+
+// POST /api/projects/:projectId/rooms - Link room(s) to a project
+router.post('/:projectId/rooms', async (req, res) => {
+  try {
+    const { roomId, roomIds, notes } = req.body;
+    const ids = roomIds || (roomId ? [roomId] : []);
+    if (ids.length === 0) return res.status(400).json({ error: 'roomId or roomIds required' });
+
+    for (const rid of ids) {
+      await pool.query(
+        'INSERT INTO ProjectRooms (project_id, room_id, notes) VALUES ($1, $2, $3) ON CONFLICT (project_id, room_id) DO NOTHING',
+        [req.params.projectId, rid, notes || null]
+      );
+    }
+
+    res.status(201).json({ success: true, linked: ids.length });
+  } catch (error) {
+    logger.error('Error linking rooms', { error: error.message });
+    res.status(500).json({ error: 'Failed to link rooms' });
+  }
+});
+
+// DELETE /api/projects/:projectId/rooms/:roomId - Unlink room from project
+router.delete('/:projectId/rooms/:roomId', async (req, res) => {
+  try {
+    await pool.query(
+      'DELETE FROM ProjectRooms WHERE project_id = $1 AND room_id = $2',
+      [req.params.projectId, req.params.roomId]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Error unlinking room', { error: error.message });
+    res.status(500).json({ error: 'Failed to unlink room' });
+  }
+});
 
 module.exports = router;

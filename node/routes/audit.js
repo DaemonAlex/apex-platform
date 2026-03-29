@@ -68,7 +68,7 @@ router.get('/log',
   ]),
   async (req, res) => {
   try {
-    const { limit = 100, offset = 0, projectId, category, severity } = req.query;
+    const { limit = 100, offset = 0, projectId, category, severity, fromDate, toDate } = req.query;
 
     // Build WHERE clause and params dynamically
     let whereClause = ' WHERE 1=1';
@@ -86,6 +86,14 @@ router.get('/log',
     if (severity) {
       whereClause += ` AND severity = $${paramIndex++}`;
       params.push(severity);
+    }
+    if (fromDate) {
+      whereClause += ` AND timestamp >= $${paramIndex++}`;
+      params.push(new Date(fromDate));
+    }
+    if (toDate) {
+      whereClause += ` AND timestamp <= $${paramIndex++}`;
+      params.push(new Date(toDate));
     }
 
     // ASRB 5.1.5: Get total count for pagination
