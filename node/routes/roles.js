@@ -76,12 +76,13 @@ async function ensureRolesTable() {
   }
 }
 
-// Run on module load
-ensureRolesTable().catch(err => logger.error('Failed to ensure Roles table', { error: err.message }));
+// Lazy init - runs on first request instead of module load
+let rolesTableReady = false;
 
 // Get all roles with user counts
 router.get('/', async (req, res) => {
   try {
+    if (!rolesTableReady) { await ensureRolesTable(); rolesTableReady = true; }
     const result = await pool.query(`
       SELECT r.*, COALESCE(uc.user_count, 0) as user_count
       FROM Roles r
@@ -127,6 +128,7 @@ router.post('/',
   ]),
   async (req, res) => {
   try {
+    if (!rolesTableReady) { await ensureRolesTable(); rolesTableReady = true; }
     const { name, displayName, description = '', permissions = [], priority = 0 } = req.body;
 
     // Check for duplicate name
@@ -169,6 +171,7 @@ router.put('/:id',
   ]),
   async (req, res) => {
   try {
+    if (!rolesTableReady) { await ensureRolesTable(); rolesTableReady = true; }
     const roleId = req.params.id;
     const { name, displayName, description, permissions = [] } = req.body;
 
@@ -222,6 +225,7 @@ router.put('/:id',
 // Delete role
 router.delete('/:id', async (req, res) => {
   try {
+    if (!rolesTableReady) { await ensureRolesTable(); rolesTableReady = true; }
     const roleId = req.params.id;
 
     const existing = await pool.query('SELECT * FROM Roles WHERE id = $1', [roleId]);

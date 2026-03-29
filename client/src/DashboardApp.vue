@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import {
-  NMessageProvider, NConfigProvider, darkTheme,
+  NMessageProvider, NConfigProvider,
   NCard, NGrid, NGi, NProgress, NTag, NButton, NSpace, NSpin, NNumberAnimation,
 } from 'naive-ui';
-import type { GlobalThemeOverrides } from 'naive-ui';
+import { useTheme } from './composables/useTheme';
 import VChart from 'vue-echarts';
 import { use } from 'echarts/core';
 import { PieChart, GaugeChart } from 'echarts/charts';
@@ -53,10 +53,10 @@ const statusChartOption = computed(() => {
   if (!portfolio.value) return {};
   const p = portfolio.value.projects;
   return {
-    tooltip: { trigger: 'item', backgroundColor: '#1e2130', borderColor: '#2a2d3e', textStyle: { color: '#eef0f4' } },
+    tooltip: { trigger: 'item', backgroundColor: colors.value.tooltipBg, borderColor: colors.value.tooltipBorder, textStyle: { color: colors.value.tooltipText } },
     series: [{
       type: 'pie', radius: ['55%', '80%'], center: ['50%', '50%'],
-      itemStyle: { borderRadius: 6, borderColor: '#1e2130', borderWidth: 2 },
+      itemStyle: { borderRadius: 6, borderColor: colors.value.cardBg, borderWidth: 2 },
       label: { show: false },
       data: [
         { value: p.active, name: 'Active', itemStyle: { color: '#22c55e' } },
@@ -82,11 +82,11 @@ const budgetGaugeOption = computed(() => {
       splitNumber: 3,
       pointer: { show: true, length: '60%', width: 4, itemStyle: { color: '#38bdf8' } },
       progress: { show: true, width: 14, roundCap: true, itemStyle: { color: pct > 100 ? '#ef4444' : pct > 80 ? '#f59e0b' : '#22c55e' } },
-      axisLine: { lineStyle: { width: 14, color: [[1, '#2a2d3e']] } },
+      axisLine: { lineStyle: { width: 14, color: [[1, colors.value.railColor]] } },
       axisTick: { show: false }, splitLine: { show: false },
-      axisLabel: { distance: 20, color: '#8890a4', fontSize: 11, formatter: (v: number) => v + '%' },
-      detail: { valueAnimation: true, fontSize: 22, fontWeight: 700, offsetCenter: [0, '70%'], color: pct > 100 ? '#ef4444' : '#eef0f4', formatter: '{value}%' },
-      title: { offsetCenter: [0, '90%'], fontSize: 12, color: '#8890a4' },
+      axisLabel: { distance: 20, color: colors.value.textMuted, fontSize: 11, formatter: (v: number) => v + '%' },
+      detail: { valueAnimation: true, fontSize: 22, fontWeight: 700, offsetCenter: [0, '70%'], color: pct > 100 ? '#ef4444' : colors.value.textPrimary, formatter: '{value}%' },
+      title: { offsetCenter: [0, '90%'], fontSize: 12, color: colors.value.textMuted },
       data: [{ value: pct, name: 'Budget Used' }],
     }]
   };
@@ -117,17 +117,12 @@ const typeIcons: Record<string, { icon: string; color: string }> = {
   'Service Call': { icon: 'ph-wrench', color: '#ef4444' },
 };
 
-const isDark = computed(() => document.documentElement.getAttribute('data-theme') === 'dark');
-const themeOverrides: GlobalThemeOverrides = {
-  common: { bodyColor: 'transparent', cardColor: '#1e2130', modalColor: '#1e2130', tableColor: '#1e2130', borderColor: '#2a2d3e', textColorBase: '#eef0f4', textColor1: '#eef0f4', textColor2: '#c0c6d4', textColor3: '#8890a4', primaryColor: '#38bdf8', successColor: '#4ade80', warningColor: '#fbbf24', errorColor: '#f87171' },
-  Card: { colorEmbedded: '#161822' }, Tag: { colorBordered: 'transparent' }, Progress: { railColor: '#2a2d3e' },
-};
-const lightOverrides: GlobalThemeOverrides = { common: { bodyColor: 'transparent' } };
+const { naiveTheme, themeOverrides, colors } = useTheme();
 </script>
 
 <template>
 <NMessageProvider>
-<NConfigProvider :theme="isDark ? darkTheme : undefined" :theme-overrides="isDark ? themeOverrides : lightOverrides">
+<NConfigProvider :theme="naiveTheme" :theme-overrides="themeOverrides">
 <div style="background:transparent;">
 
   <NSpin :show="loading">
@@ -137,7 +132,7 @@ const lightOverrides: GlobalThemeOverrides = { common: { bodyColor: 'transparent
     <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:28px;">
       <div>
         <h1 style="margin:0;font-size:1.6rem;font-weight:700;">{{ greeting }}, {{ userName || 'there' }}</h1>
-        <p style="margin:4px 0 0;color:#94a3b8;font-size:0.95rem;">{{ todayStr }}</p>
+        <p :style="{ margin: '4px 0 0', color: colors.textMuted, fontSize: '0.95rem' }">{{ todayStr }}</p>
       </div>
       <NSpace>
         <NButton type="primary" size="small" @click="$emit('navigate', 'projects')"><i class="ph ph-plus" style="margin-right:4px;" /> New Project</NButton>
@@ -152,35 +147,35 @@ const lightOverrides: GlobalThemeOverrides = { common: { bodyColor: 'transparent
         <NCard size="small" style="text-align:center;position:relative;overflow:hidden;">
           <div style="position:absolute;top:-10px;right:-10px;font-size:4rem;opacity:0.06;"><i class="ph ph-folder" /></div>
           <div style="font-size:2.2rem;font-weight:800;color:#0ea5e9;"><NNumberAnimation :from="0" :to="portfolio.projects?.total || 0" :duration="800" /></div>
-          <div style="font-size:0.85rem;color:#94a3b8;margin-top:2px;">Total Projects</div>
+          <div :style="{ fontSize: '0.85rem', color: colors.textMuted, marginTop: '2px' }">Total Projects</div>
         </NCard>
       </NGi>
       <NGi>
         <NCard size="small" style="text-align:center;position:relative;overflow:hidden;">
           <div style="position:absolute;top:-10px;right:-10px;font-size:4rem;opacity:0.06;"><i class="ph ph-check-circle" /></div>
           <div style="font-size:2.2rem;font-weight:800;color:#22c55e;"><NNumberAnimation :from="0" :to="portfolio.tasks?.completionRate || 0" :duration="1000" />%</div>
-          <div style="font-size:0.85rem;color:#94a3b8;margin-top:2px;">Tasks Complete</div>
+          <div :style="{ fontSize: '0.85rem', color: colors.textMuted, marginTop: '2px' }">Tasks Complete</div>
         </NCard>
       </NGi>
       <NGi>
         <NCard size="small" style="text-align:center;position:relative;overflow:hidden;">
           <div style="position:absolute;top:-10px;right:-10px;font-size:4rem;opacity:0.06;"><i class="ph ph-target" /></div>
           <div style="font-size:2.2rem;font-weight:800;color:#38bdf8;"><NNumberAnimation :from="0" :to="portfolio.onTimeRate || 0" :duration="800" />%</div>
-          <div style="font-size:0.85rem;color:#94a3b8;margin-top:2px;">On-Time Rate</div>
+          <div :style="{ fontSize: '0.85rem', color: colors.textMuted, marginTop: '2px' }">On-Time Rate</div>
         </NCard>
       </NGi>
       <NGi>
         <NCard size="small" style="text-align:center;position:relative;overflow:hidden;">
           <div style="position:absolute;top:-10px;right:-10px;font-size:4rem;opacity:0.06;"><i class="ph ph-warning" /></div>
           <div style="font-size:2.2rem;font-weight:800;color:#ef4444;"><NNumberAnimation :from="0" :to="portfolio.atRisk || 0" :duration="600" /></div>
-          <div style="font-size:0.85rem;color:#94a3b8;margin-top:2px;">At Risk</div>
+          <div :style="{ fontSize: '0.85rem', color: colors.textMuted, marginTop: '2px' }">At Risk</div>
         </NCard>
       </NGi>
       <NGi>
         <NCard size="small" style="text-align:center;position:relative;overflow:hidden;">
           <div style="position:absolute;top:-10px;right:-10px;font-size:4rem;opacity:0.06;"><i class="ph ph-monitor" /></div>
           <div style="font-size:2.2rem;font-weight:800;" :style="{ color: (compliance?.summary?.total||0) > 0 ? '#22c55e' : '#94a3b8' }"><NNumberAnimation :from="0" :to="compliance?.summary?.total || 0" :duration="600" /></div>
-          <div style="font-size:0.85rem;color:#94a3b8;margin-top:2px;">Rooms Tracked</div>
+          <div :style="{ fontSize: '0.85rem', color: colors.textMuted, marginTop: '2px' }">Rooms Tracked</div>
         </NCard>
       </NGi>
     </NGrid>
@@ -203,7 +198,7 @@ const lightOverrides: GlobalThemeOverrides = { common: { bodyColor: 'transparent
       <NGi>
         <NCard size="small" title="Budget Utilization">
           <VChart :option="budgetGaugeOption" style="height:220px;" autoresize />
-          <div style="text-align:center;font-size:0.8rem;color:#94a3b8;margin-top:4px;">
+          <div :style="{ textAlign: 'center', fontSize: '0.8rem', color: colors.textMuted, marginTop: '4px' }">
             ${{ ((portfolio.budget?.totalActual || 0) / 1000).toFixed(0) }}K of ${{ ((portfolio.budget?.totalPlanned || 0) / 1000).toFixed(0) }}K
           </div>
         </NCard>
@@ -214,10 +209,10 @@ const lightOverrides: GlobalThemeOverrides = { common: { bodyColor: 'transparent
         <NCard size="small" title="Room Health" v-if="compliance">
           <div style="display:flex;justify-content:center;margin:16px 0;">
             <NProgress type="circle" :percentage="compliance.summary?.total > 0 ? Math.round(((compliance.summary?.total - (compliance.summary?.belowStandard || 0)) / compliance.summary?.total) * 100) : 0"
-              :stroke-width="10" :width="140" :color="'#22c55e'" :rail-color="'#2a2d3e'">
+              :stroke-width="10" :width="140" :color="'#22c55e'" :rail-color="colors.railColor">
               <div style="text-align:center;">
                 <div style="font-size:1.8rem;font-weight:700;color:#22c55e;">{{ compliance.summary?.total - (compliance.summary?.belowStandard || 0) }}</div>
-                <div style="font-size:0.75rem;color:#94a3b8;">of {{ compliance.summary?.total }} healthy</div>
+                <div :style="{ fontSize: '0.75rem', color: colors.textMuted }">of {{ compliance.summary?.total }} healthy</div>
               </div>
             </NProgress>
           </div>
@@ -240,12 +235,12 @@ const lightOverrides: GlobalThemeOverrides = { common: { bodyColor: 'transparent
               style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-radius:6px;border-left:3px solid #ef4444;background:rgba(239,68,68,0.04);">
               <div>
                 <div style="font-weight:500;">{{ p.name }}</div>
-                <div style="font-size:0.78rem;color:#94a3b8;">{{ p.type }} - {{ p.progress }}% complete</div>
+                <div :style="{ fontSize: '0.78rem', color: colors.textMuted }">{{ p.type }} - {{ p.progress }}% complete</div>
               </div>
               <NTag type="error" size="small" :bordered="false">{{ p.daysOverdue }}d overdue</NTag>
             </div>
           </div>
-          <div v-else style="text-align:center;padding:20px;color:#94a3b8;">
+          <div v-else :style="{ textAlign: 'center', padding: '20px', color: colors.textMuted }">
             <i class="ph ph-check-circle" style="font-size:2rem;color:#22c55e;display:block;margin-bottom:8px;" />
             All clear - no overdue projects
           </div>
@@ -257,19 +252,19 @@ const lightOverrides: GlobalThemeOverrides = { common: { bodyColor: 'transparent
         <NCard size="small" title="Upcoming Field Work (7 days)">
           <div v-if="upcomingOps.length" style="display:flex;flex-direction:column;gap:8px;">
             <div v-for="op in upcomingOps" :key="op.id"
-              style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);">
+              :style="{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', borderRadius: '6px', border: '1px solid ' + colors.borderSubtle }">
               <i :class="'ph ' + (typeIcons[op.type]?.icon || 'ph-briefcase')"
                 :style="{ fontSize:'1.2rem', color: typeIcons[op.type]?.color || '#64748b' }" />
               <div style="flex:1;">
                 <div style="font-weight:500;font-size:0.9rem;">{{ op.taskName || op.title }}</div>
-                <div style="font-size:0.78rem;color:#94a3b8;">{{ op.assignee || op.assignedTo }} - {{ op.location }}</div>
+                <div :style="{ fontSize: '0.78rem', color: colors.textMuted }">{{ op.assignee || op.assignedTo }} - {{ op.location }}</div>
               </div>
-              <div style="text-align:right;font-size:0.8rem;color:#94a3b8;">
+              <div :style="{ textAlign: 'right', fontSize: '0.8rem', color: colors.textMuted }">
                 {{ new Date(op.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }}
               </div>
             </div>
           </div>
-          <div v-else style="text-align:center;padding:20px;color:#94a3b8;">
+          <div v-else :style="{ textAlign: 'center', padding: '20px', color: colors.textMuted }">
             <i class="ph ph-calendar-blank" style="font-size:2rem;display:block;margin-bottom:8px;" />
             No field work scheduled this week
           </div>

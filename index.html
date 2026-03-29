@@ -17,7 +17,7 @@
     <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css" />
 
     <!-- Vue Room Status Module (built from client/) -->
-    <script src="/vue/apex-rooms.iife.js?v=25" defer></script>
+    <script src="/vue/apex-rooms.iife.js?v=29" defer></script>
 
     <!-- External Libraries from CDN -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -77,9 +77,11 @@
         }
 
         /* Dark mode - Navigation */
-        [data-theme="dark"] .app-navigation { background: #0d0f16; border-bottom: 1px solid #2a2d3e; }
-        [data-theme="dark"] .nav-btn { color: #a0a8bc; }
+        [data-theme="dark"] .app-navigation { background: #0d0f16; border-bottom: 1px solid #2a2d3e; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+        [data-theme="dark"] .nav-btn { background: rgba(255,255,255,0.1); color: #a0a8bc; }
         [data-theme="dark"] .nav-btn:hover { background: #1e2130; color: #eef0f4; }
+        [data-theme="dark"] .nav-btn.active { background: var(--primary-500); color: #fff; }
+        [data-theme="dark"] .nav-btn.primary { background: var(--primary-500); color: #fff; }
 
         /* Dark mode - Sidebar */
         [data-theme="dark"] .sidebar { background: #0d0f16; border-color: #2a2d3e; }
@@ -266,9 +268,10 @@
             left: 0;
             right: 0;
             height: var(--nav-height);
-            background: var(--gray-900);
+            background: #ffffff;
+            border-bottom: 1px solid #e2e8f0;
             z-index: 1000;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
         }
 
         .nav-content {
@@ -322,8 +325,8 @@
         }
 
         .nav-btn {
-            background: rgba(255, 255, 255, 0.1);
-            color: white;
+            background: #f1f5f9;
+            color: #475569;
             border: none;
             border-radius: 0.5rem;
             padding: 0.5rem 1rem;
@@ -337,26 +340,30 @@
         }
 
         .nav-btn:hover {
-            background: rgba(255, 255, 255, 0.2);
+            background: #e2e8f0;
+            color: #1e293b;
             transform: translateY(-1px);
         }
 
         .nav-btn.primary {
             background: var(--primary-500);
+            color: #fff;
         }
 
         .nav-btn.primary:hover {
             background: var(--primary-600);
+            color: #fff;
         }
 
         .nav-btn.active {
-            background: var(--primary-600);
+            background: var(--primary-500);
+            color: #fff;
             box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.3);
         }
 
         .theme-toggle {
-            background: rgba(255, 255, 255, 0.1);
-            color: white;
+            background: #f1f5f9;
+            color: #475569;
             border: none;
             border-radius: 0.5rem;
             padding: 0.5rem;
@@ -371,10 +378,11 @@
             margin-left: 0.25rem;
         }
         .theme-toggle:hover {
-            background: rgba(255, 255, 255, 0.2);
+            background: #e2e8f0;
             transform: translateY(-1px);
         }
-        [data-theme="dark"] .theme-toggle { color: #fbbf24; }
+        [data-theme="dark"] .theme-toggle { background: rgba(255,255,255,0.1); color: #fbbf24; }
+        [data-theme="dark"] .theme-toggle:hover { background: rgba(255,255,255,0.2); }
 
         /* Connection Status & User Menu (same as before) */
         .connection-status {

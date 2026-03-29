@@ -3,37 +3,14 @@ import { ref, computed, onMounted } from 'vue';
 import {
   NMessageProvider, NConfigProvider, NCard, NForm, NFormItem, NInput,
   NSelect, NSwitch, NButton, NSpace, NSpin, NGrid, NGi,
-  darkTheme, useMessage
+  useMessage
 } from 'naive-ui';
-import type { GlobalThemeOverrides } from 'naive-ui';
+import { useTheme } from './composables/useTheme';
 import { apiFetch } from './composables/useApi';
 
 defineProps<{ userName?: string }>();
 
-const isDark = computed(() => document.documentElement.getAttribute('data-theme') === 'dark');
-
-const themeOverrides: GlobalThemeOverrides = {
-  common: {
-    bodyColor: 'transparent', cardColor: '#1e2130', modalColor: '#1e2130',
-    popoverColor: '#1e2130', tableColor: '#1e2130', inputColor: '#161822',
-    borderColor: '#2a2d3e', textColorBase: '#eef0f4', textColor1: '#eef0f4',
-    textColor2: '#c0c6d4', textColor3: '#8890a4', primaryColor: '#38bdf8',
-    primaryColorHover: '#0ea5e9', primaryColorPressed: '#0284c7',
-    successColor: '#4ade80', warningColor: '#fbbf24', errorColor: '#f87171',
-  },
-  Card: { colorEmbedded: '#161822' },
-  Input: {
-    color: '#161822', border: '1px solid #2a2d3e',
-    colorFocus: '#161822', borderFocus: '1px solid #38bdf8',
-    textColor: '#eef0f4', placeholderColor: '#4a4d5e',
-  },
-  InternalSelection: {
-    color: '#161822', border: '1px solid #2a2d3e',
-    textColor: '#eef0f4', placeholderColor: '#4a4d5e', colorActive: '#161822',
-  },
-  Button: { textColorPrimary: '#fff' },
-};
-const lightOverrides: GlobalThemeOverrides = { common: { bodyColor: 'transparent' } };
+const { naiveTheme, themeOverrides } = useTheme();
 
 // Profile state
 const loading = ref(true);
@@ -174,8 +151,8 @@ async function savePreferences() {
 <template>
   <NMessageProvider>
     <NConfigProvider
-      :theme="isDark ? darkTheme : undefined"
-      :theme-overrides="isDark ? themeOverrides : lightOverrides"
+      :theme="naiveTheme"
+      :theme-overrides="themeOverrides"
     >
       <NSpin :show="loading">
         <NGrid :x-gap="16" :y-gap="16" :cols="1">

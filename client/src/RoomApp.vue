@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import {
-  NTabs, NTabPane, NMessageProvider, NConfigProvider, darkTheme,
+  NTabs, NTabPane, NMessageProvider, NConfigProvider,
   NCard, NGrid, NGi, NStatistic, NSpace, NButtonGroup, NButton,
   NInput, NSelect, NDataTable, NTag,
   NModal, NForm, NFormItem, NEmpty, NSpin, NCollapse, NCollapseItem,
   NInputNumber,
   useMessage,
 } from 'naive-ui';
-import type { GlobalThemeOverrides, DataTableColumns } from 'naive-ui';
+import type { DataTableColumns } from 'naive-ui';
+import { useTheme } from './composables/useTheme';
 import { useRoomStore } from './stores/rooms';
 import { ROOM_TYPE_PRESETS } from './types';
 import type { Room, Floor, RoomCheck, Equipment } from './types';
@@ -61,8 +62,6 @@ const equipRoomId = ref<string | null>(null);
 const equipForm = ref({ category: '', make: '', model: '', serialNumber: '', firmwareVersion: '', installDate: '', warrantyEnd: '', notes: '' });
 
 function setViewMode(mode: string) { viewMode.value = mode; localStorage.setItem('apex_room_view', mode); }
-
-const isDark = computed(() => document.documentElement.getAttribute('data-theme') === 'dark');
 
 // Filtered rooms
 const filteredRooms = computed(() => {
@@ -315,21 +314,12 @@ async function loadAllEquipment() {
 }
 
 // Theme
-const themeOverrides: GlobalThemeOverrides = {
-  common: { bodyColor: 'transparent', cardColor: '#1e2130', modalColor: '#1e2130', popoverColor: '#1e2130', tableColor: '#1e2130', inputColor: '#161822', borderColor: '#2a2d3e', textColorBase: '#eef0f4', textColor1: '#eef0f4', textColor2: '#c0c6d4', textColor3: '#8890a4', primaryColor: '#38bdf8', primaryColorHover: '#0ea5e9', primaryColorPressed: '#0284c7', successColor: '#4ade80', warningColor: '#fbbf24', errorColor: '#f87171' },
-  Card: { colorEmbedded: '#161822' }, DataTable: { thColor: '#161822', tdColor: 'transparent', tdColorStriped: 'rgba(255,255,255,0.02)', tdColorHover: 'rgba(255,255,255,0.04)', borderColor: '#2a2d3e', thTextColor: '#a0a8bc' },
-  Tabs: { tabTextColorLine: '#a0a8bc', tabTextColorActiveLine: '#38bdf8', tabTextColorHoverLine: '#38bdf8', barColor: '#38bdf8' },
-  Input: { color: '#161822', border: '1px solid #2a2d3e', colorFocus: '#161822', borderFocus: '1px solid #38bdf8', textColor: '#eef0f4', placeholderColor: '#4a4d5e' },
-  InternalSelection: { color: '#161822', border: '1px solid #2a2d3e', textColor: '#eef0f4', placeholderColor: '#4a4d5e', colorActive: '#161822' },
-  Button: { textColorPrimary: '#fff' }, Tag: { colorBordered: 'transparent' },
-  Collapse: { titleTextColor: '#eef0f4' }, Descriptions: { thColor: '#161822', tdColor: 'transparent', borderColor: '#2a2d3e' },
-};
-const lightOverrides: GlobalThemeOverrides = { common: { bodyColor: 'transparent' } };
+const { naiveTheme, themeOverrides } = useTheme();
 </script>
 
 <template>
 <NMessageProvider>
-<NConfigProvider :theme="isDark ? darkTheme : undefined" :theme-overrides="isDark ? themeOverrides : lightOverrides">
+<NConfigProvider :theme="naiveTheme" :theme-overrides="themeOverrides">
 <div style="background:transparent;">
 
   <h1 style="margin:0 0 16px 0;font-size:1.5rem;">Room Status</h1>
