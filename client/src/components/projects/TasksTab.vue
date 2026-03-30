@@ -6,11 +6,13 @@ import {
   useMessage,
 } from 'naive-ui';
 import { apiFetch } from '../../composables/useApi';
+import { useTheme } from '../../composables/useTheme';
 import type { DataTableColumns } from 'naive-ui';
 
 const props = defineProps<{ projectId: string; tasks: any[] }>();
 const emit = defineEmits<{ (e: 'refresh'): void }>();
 const msg = useMessage();
+const { colors } = useTheme();
 
 const showTaskModal = ref(false);
 const editingTaskId = ref<string | null>(null);
@@ -234,10 +236,10 @@ const stats = computed(() => ({
         </div>
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
           <NFormItem label="Start Date">
-            <input v-model="taskForm.startDate" type="date" style="width:100%;padding:6px 10px;border:1px solid #2a2d3e;border-radius:3px;background:#161822;color:#eef0f4;" />
+            <input v-model="taskForm.startDate" type="date" :style="`width:100%;padding:6px 10px;border:1px solid ${colors.inputBorder};border-radius:3px;background:${colors.inputBg};color:${colors.inputText};`" />
           </NFormItem>
           <NFormItem label="End Date">
-            <input v-model="taskForm.endDate" type="date" style="width:100%;padding:6px 10px;border:1px solid #2a2d3e;border-radius:3px;background:#161822;color:#eef0f4;" />
+            <input v-model="taskForm.endDate" type="date" :style="`width:100%;padding:6px 10px;border:1px solid ${colors.inputBorder};border-radius:3px;background:${colors.inputBg};color:${colors.inputText};`" />
           </NFormItem>
           <NFormItem label="Est. Hours">
             <NInputNumber v-model:value="taskForm.estimatedHours" :min="0" :step="0.5" placeholder="0" style="width: 100%;" />

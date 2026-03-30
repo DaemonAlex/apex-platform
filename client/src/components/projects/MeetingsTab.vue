@@ -5,9 +5,11 @@ import {
   NModal, NForm, NFormItem, NInput, NSelect, useMessage,
 } from 'naive-ui';
 import { apiFetch } from '../../composables/useApi';
+import { useTheme } from '../../composables/useTheme';
 
 const props = defineProps<{ projectId: string }>();
 const msg = useMessage();
+const { colors } = useTheme();
 const meetings = ref<any[]>([]);
 const loading = ref(true);
 const showModal = ref(false);
@@ -107,7 +109,7 @@ onMounted(load);
           <div v-if="(m.actionItems || []).length > 0">
             <div style="font-size: 0.8rem; font-weight: 600; color: #64748b; margin-bottom: 4px;">Action Items</div>
             <table style="width: 100%; font-size: 0.85rem; border-collapse: collapse;">
-              <thead><tr style="border-bottom: 1px solid #2a2d3e;">
+              <thead><tr :style="`border-bottom: 1px solid ${colors.inputBorder};`">
                 <th style="text-align: left; padding: 4px 0;">Action</th>
                 <th style="text-align: left; padding: 4px;">Owner</th>
                 <th style="text-align: left; padding: 4px;">Due</th>

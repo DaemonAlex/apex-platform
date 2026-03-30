@@ -10,6 +10,7 @@ import PeopleTab from '../components/projects/PeopleTab.vue';
 import NotesTab from '../components/projects/NotesTab.vue';
 import MeetingsTab from '../components/projects/MeetingsTab.vue';
 import DocsTab from '../components/projects/DocsTab.vue';
+import VendorsTab from '../components/projects/VendorsTab.vue';
 
 const props = defineProps<{ projectId: string }>();
 const emit = defineEmits<{ (e: 'back'): void }>();
@@ -35,7 +36,7 @@ async function loadProject() {
 }
 
 const statusType = computed(() => {
-  const map: Record<string, string> = { active: 'success', completed: 'success', planning: 'default', 'on-hold': 'warning', cancelled: 'error' };
+  const map: Record<string, string> = { active: 'success', completed: 'success', planning: 'info', scheduled: 'info', 'on-hold': 'warning', cancelled: 'default' };
   return (map[project.value?.status] || 'default') as any;
 });
 
@@ -84,6 +85,9 @@ onMounted(loadProject);
           </NTabPane>
           <NTabPane name="docs" tab="Docs">
             <DocsTab :project-id="projectId" />
+          </NTabPane>
+          <NTabPane name="vendors" tab="Vendors">
+            <VendorsTab entity-type="project" :entity-id="projectId" />
           </NTabPane>
         </NTabs>
       </template>

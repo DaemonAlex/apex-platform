@@ -69,5 +69,10 @@ export const useProjectStore = defineStore('projects', () => {
     return data;
   }
 
-  return { projects, pagination, loading, filters, sort, fetchProjects, fetchProject };
+  async function createProject(payload: Record<string, any>) {
+    await apiFetch('/projects', { method: 'POST', body: JSON.stringify(payload) });
+    await fetchProjects(1);
+  }
+
+  return { projects, pagination, loading, filters, sort, fetchProjects, fetchProject, createProject };
 });

@@ -7,9 +7,11 @@ import {
 } from 'naive-ui';
 import type { DataTableColumns, UploadFileInfo } from 'naive-ui';
 import { h } from 'vue';
+import { useTheme } from '../../composables/useTheme';
 
 const props = defineProps<{ projectId: string }>();
 const msg = useMessage();
+const { colors } = useTheme();
 
 // Submittals
 const submittals = ref<any[]>([]);
@@ -209,7 +211,7 @@ onMounted(load);
         </div>
         <div style="display: grid; grid-template-columns: 120px 1fr; gap: 12px;">
           <NFormItem label="Number"><NInput v-model:value="subForm.number" placeholder="SUB-001" /></NFormItem>
-          <NFormItem label="Date"><input v-model="subForm.submittedDate" type="date" style="width:100%;padding:6px 10px;border:1px solid #2a2d3e;border-radius:3px;background:#161822;color:#eef0f4;" /></NFormItem>
+          <NFormItem label="Date"><input v-model="subForm.submittedDate" type="date" :style="`width:100%;padding:6px 10px;border:1px solid ${colors.inputBorder};border-radius:3px;background:${colors.inputBg};color:${colors.inputText};`" /></NFormItem>
         </div>
         <NFormItem label="Notes"><NInput v-model:value="subForm.notes" type="textarea" :rows="2" /></NFormItem>
       </NForm>

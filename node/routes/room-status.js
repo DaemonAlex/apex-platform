@@ -137,6 +137,50 @@ async function ensureRoomTables() {
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
+
+  // Room technical details - the "room passport"
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS RoomTechDetails (
+      id SERIAL PRIMARY KEY,
+      room_id VARCHAR(100) NOT NULL UNIQUE,
+      platform VARCHAR(50),
+      platform_version VARCHAR(50),
+      cisco_workspace_id VARCHAR(100),
+      cisco_activation_code VARCHAR(100),
+      cisco_device_serial VARCHAR(100),
+      cisco_registration_status VARCHAR(50),
+      network_jacks JSONB DEFAULT '[]',
+      devices JSONB DEFAULT '[]',
+      cable_runs JSONB DEFAULT '[]',
+      credentials JSONB DEFAULT '[]',
+      vlan VARCHAR(50),
+      switch_name VARCHAR(100),
+      switch_port VARCHAR(50),
+      poe_status VARCHAR(50),
+      wifi_ssid VARCHAR(100),
+      notes TEXT,
+      updated_by VARCHAR(255),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  // Documents - polymorphic attachment to rooms, projects, vendors, equipment
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS Documents (
+      id SERIAL PRIMARY KEY,
+      entity_type VARCHAR(50) NOT NULL,
+      entity_id VARCHAR(100) NOT NULL,
+      filename VARCHAR(255) NOT NULL,
+      original_name VARCHAR(255) NOT NULL,
+      file_size INTEGER,
+      mime_type VARCHAR(100),
+      doc_type VARCHAR(50) DEFAULT 'other',
+      description TEXT,
+      uploaded_by VARCHAR(255),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
 }
 
 let tablesEnsured = false;
@@ -344,6 +388,56 @@ router.get('/:roomId/history', async (req, res) => {
   } catch (error) {
     logger.error('Error fetching room history', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch room history', details: error.message });
+  }
+});
+
+// PUT /api/room-status/:roomId - Update a room
+router.put('/:roomId', async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const { name, roomType, capacity, locationId, floorId, standardId, checkFrequency, checkDay } = req.body;
+
+    // Build dynamic SET clause
+    const sets = [];
+    const vals = [];
+    let i = 1;
+    if (name !== undefined)           { sets.push(`name = $${i++}`); vals.push(name); }
+    if (roomType !== undefined)       { sets.push(`room_type = $${i++}`); vals.push(roomType); }
+    if (capacity !== undefined)       { sets.push(`capacity = $${i++}`); vals.push(capacity); }
+    if (locationId !== undefined)     { sets.push(`location_id = $${i++}`); vals.push(locationId); }
+    if (floorId !== undefined)        { sets.push(`floor_id = $${i++}`); vals.push(floorId); }
+    if (standardId !== undefined)     { sets.push(`standard_id = $${i++}`); vals.push(standardId || null); }
+    if (checkFrequency !== undefined) { sets.push(`check_frequency = $${i++}`); vals.push(checkFrequency); }
+    if (checkDay !== undefined)       { sets.push(`check_day = $${i++}`); vals.push(checkDay); }
+
+    if (sets.length === 0) return res.status(400).json({ error: 'No fields to update' });
+
+    sets.push(`updated_at = NOW()`);
+    vals.push(roomId);
+
+    const result = await pool.query(
+      `UPDATE Rooms SET ${sets.join(', ')} WHERE room_id = $${i} AND deleted_at IS NULL RETURNING *`,
+      vals
+    );
+
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Room not found' });
+
+    // Sync text location/floor fields
+    if (locationId || floorId) {
+      await pool.query(`
+        UPDATE Rooms r SET
+          location = COALESCE(l.name, '') || CASE WHEN f.name IS NOT NULL THEN ' - Floor ' || f.name ELSE '' END,
+          floor = f.name
+        FROM Locations l
+        LEFT JOIN Floors f ON f.id = r.floor_id
+        WHERE l.id = r.location_id AND r.room_id = $1
+      `, [roomId]);
+    }
+
+    res.json({ success: true, room: result.rows[0] });
+  } catch (error) {
+    logger.error('Error updating room', { error: error.message });
+    res.status(500).json({ error: 'Failed to update room', details: error.message });
   }
 });
 
@@ -647,12 +741,17 @@ router.get('/compliance/scorecard', async (req, res) => {
   try {
     if (!tablesEnsured) { await ensureRoomTables(); tablesEnsured = true; }
 
-    // Get all rooms with their standard and equipment
+    // Get all rooms with their standard, equipment, and latest check status
     const roomsResult = await pool.query(`
       SELECT r.room_id, r.name, r.room_type, r.location, r.standard_id,
-             s.name as standard_name, s.required_equipment
+             s.name as standard_name, s.required_equipment,
+             lc.rag_status, lc.checked_at
       FROM Rooms r
       LEFT JOIN RoomStandards s ON r.standard_id = s.id
+      LEFT JOIN LATERAL (
+        SELECT rag_status, checked_at FROM RoomCheckHistory
+        WHERE room_id = r.room_id ORDER BY checked_at DESC LIMIT 1
+      ) lc ON true
       WHERE r.deleted_at IS NULL
     `);
 
@@ -672,7 +771,7 @@ router.get('/compliance/scorecard', async (req, res) => {
     const rooms = roomsResult.rows.map(room => {
       if (!room.standard_id || !room.required_equipment) {
         noStandard++;
-        return { id: room.room_id, name: room.name, location: room.location, roomType: room.room_type, compliance: 'no-standard', standardName: null, missing: [] };
+        return { id: room.room_id, name: room.name, location: room.location, roomType: room.room_type, compliance: 'no-standard', standardName: null, missing: [], ragStatus: room.rag_status || null };
       }
 
       const required = typeof room.required_equipment === 'string' ? JSON.parse(room.required_equipment) : room.required_equipment;
@@ -691,10 +790,10 @@ router.get('/compliance/scorecard', async (req, res) => {
 
       if (missing.length === 0) {
         atStandard++;
-        return { id: room.room_id, name: room.name, location: room.location, roomType: room.room_type, compliance: 'at-standard', standardName: room.standard_name, missing: [] };
+        return { id: room.room_id, name: room.name, location: room.location, roomType: room.room_type, compliance: 'at-standard', standardName: room.standard_name, missing: [], ragStatus: room.rag_status || null };
       } else {
         belowStandard++;
-        return { id: room.room_id, name: room.name, location: room.location, roomType: room.room_type, compliance: 'below-standard', standardName: room.standard_name, missing };
+        return { id: room.room_id, name: room.name, location: room.location, roomType: room.room_type, compliance: 'below-standard', standardName: room.standard_name, missing, ragStatus: room.rag_status || null };
       }
     });
 
@@ -705,6 +804,196 @@ router.get('/compliance/scorecard', async (req, res) => {
   } catch (error) {
     logger.error('Error generating compliance scorecard', { error: error.message });
     res.status(500).json({ error: 'Failed to generate compliance scorecard' });
+  }
+});
+
+// ==================== ROOM TECH DETAILS ====================
+
+// GET /api/room-status/:roomId/tech - Get technical details for a room
+router.get('/:roomId/tech', async (req, res) => {
+  try {
+    if (!tablesEnsured) { await ensureRoomTables(); tablesEnsured = true; }
+    const { roomId } = req.params;
+    const result = await pool.query('SELECT * FROM RoomTechDetails WHERE room_id = $1', [roomId]);
+    if (result.rows.length === 0) {
+      // Return empty shell so UI can render form
+      return res.json({
+        roomId,
+        platform: null, platformVersion: null,
+        ciscoWorkspaceId: null, ciscoActivationCode: null, ciscoDeviceSerial: null, ciscoRegistrationStatus: null,
+        networkJacks: [], devices: [], cableRuns: [], credentials: [],
+        vlan: null, switchName: null, switchPort: null, poeStatus: null, wifiSsid: null,
+        notes: null, updatedBy: null, updatedAt: null,
+      });
+    }
+    const r = result.rows[0];
+    res.json({
+      id: r.id, roomId: r.room_id,
+      platform: r.platform, platformVersion: r.platform_version,
+      ciscoWorkspaceId: r.cisco_workspace_id, ciscoActivationCode: r.cisco_activation_code,
+      ciscoDeviceSerial: r.cisco_device_serial, ciscoRegistrationStatus: r.cisco_registration_status,
+      networkJacks: r.network_jacks || [], devices: r.devices || [],
+      cableRuns: r.cable_runs || [], credentials: r.credentials || [],
+      vlan: r.vlan, switchName: r.switch_name, switchPort: r.switch_port,
+      poeStatus: r.poe_status, wifiSsid: r.wifi_ssid,
+      notes: r.notes, updatedBy: r.updated_by, updatedAt: r.updated_at,
+    });
+  } catch (error) {
+    logger.error('Error fetching room tech details', { error: error.message });
+    res.status(500).json({ error: 'Failed to fetch tech details' });
+  }
+});
+
+// PUT /api/room-status/:roomId/tech - Create or update tech details
+router.put('/:roomId/tech', async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const {
+      platform, platformVersion,
+      ciscoWorkspaceId, ciscoActivationCode, ciscoDeviceSerial, ciscoRegistrationStatus,
+      networkJacks, devices, cableRuns, credentials,
+      vlan, switchName, switchPort, poeStatus, wifiSsid,
+      notes,
+    } = req.body;
+
+    const userName = req.user?.name || req.user?.email || 'Unknown';
+
+    const result = await pool.query(`
+      INSERT INTO RoomTechDetails (room_id, platform, platform_version,
+        cisco_workspace_id, cisco_activation_code, cisco_device_serial, cisco_registration_status,
+        network_jacks, devices, cable_runs, credentials,
+        vlan, switch_name, switch_port, poe_status, wifi_ssid,
+        notes, updated_by, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW())
+      ON CONFLICT (room_id) DO UPDATE SET
+        platform = COALESCE(EXCLUDED.platform, RoomTechDetails.platform),
+        platform_version = COALESCE(EXCLUDED.platform_version, RoomTechDetails.platform_version),
+        cisco_workspace_id = COALESCE(EXCLUDED.cisco_workspace_id, RoomTechDetails.cisco_workspace_id),
+        cisco_activation_code = COALESCE(EXCLUDED.cisco_activation_code, RoomTechDetails.cisco_activation_code),
+        cisco_device_serial = COALESCE(EXCLUDED.cisco_device_serial, RoomTechDetails.cisco_device_serial),
+        cisco_registration_status = COALESCE(EXCLUDED.cisco_registration_status, RoomTechDetails.cisco_registration_status),
+        network_jacks = COALESCE(EXCLUDED.network_jacks, RoomTechDetails.network_jacks),
+        devices = COALESCE(EXCLUDED.devices, RoomTechDetails.devices),
+        cable_runs = COALESCE(EXCLUDED.cable_runs, RoomTechDetails.cable_runs),
+        credentials = COALESCE(EXCLUDED.credentials, RoomTechDetails.credentials),
+        vlan = COALESCE(EXCLUDED.vlan, RoomTechDetails.vlan),
+        switch_name = COALESCE(EXCLUDED.switch_name, RoomTechDetails.switch_name),
+        switch_port = COALESCE(EXCLUDED.switch_port, RoomTechDetails.switch_port),
+        poe_status = COALESCE(EXCLUDED.poe_status, RoomTechDetails.poe_status),
+        wifi_ssid = COALESCE(EXCLUDED.wifi_ssid, RoomTechDetails.wifi_ssid),
+        notes = COALESCE(EXCLUDED.notes, RoomTechDetails.notes),
+        updated_by = EXCLUDED.updated_by,
+        updated_at = NOW()
+      RETURNING *
+    `, [
+      roomId, platform || null, platformVersion || null,
+      ciscoWorkspaceId || null, ciscoActivationCode || null, ciscoDeviceSerial || null, ciscoRegistrationStatus || null,
+      JSON.stringify(networkJacks || []), JSON.stringify(devices || []),
+      JSON.stringify(cableRuns || []), JSON.stringify(credentials || []),
+      vlan || null, switchName || null, switchPort || null, poeStatus || null, wifiSsid || null,
+      notes || null, userName,
+    ]);
+
+    res.json({ success: true, techDetails: result.rows[0] });
+  } catch (error) {
+    logger.error('Error saving room tech details', { error: error.message });
+    res.status(500).json({ error: 'Failed to save tech details' });
+  }
+});
+
+// ==================== DOCUMENTS ====================
+
+const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
+
+// Ensure upload directory exists
+const uploadDir = path.join(__dirname, '..', 'uploads', 'documents');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+const docStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_')),
+});
+const docUpload = multer({ storage: docStorage, limits: { fileSize: 20 * 1024 * 1024 } }); // 20MB max
+
+// GET /api/room-status/documents/:entityType/:entityId - List documents
+router.get('/documents/:entityType/:entityId', async (req, res) => {
+  try {
+    const { entityType, entityId } = req.params;
+    const result = await pool.query(
+      'SELECT * FROM Documents WHERE entity_type = $1 AND entity_id = $2 ORDER BY created_at DESC',
+      [entityType, entityId]
+    );
+    res.json({
+      documents: result.rows.map(d => ({
+        id: d.id, entityType: d.entity_type, entityId: d.entity_id,
+        filename: d.filename, originalName: d.original_name,
+        fileSize: d.file_size, mimeType: d.mime_type,
+        docType: d.doc_type, description: d.description,
+        uploadedBy: d.uploaded_by, createdAt: d.created_at,
+      })),
+    });
+  } catch (error) {
+    logger.error('Error fetching documents', { error: error.message });
+    res.status(500).json({ error: 'Failed to fetch documents' });
+  }
+});
+
+// POST /api/room-status/documents/:entityType/:entityId - Upload document
+router.post('/documents/:entityType/:entityId', docUpload.single('file'), async (req, res) => {
+  try {
+    const { entityType, entityId } = req.params;
+    const { docType, description } = req.body;
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const userName = req.user?.name || req.user?.email || 'Unknown';
+
+    const result = await pool.query(
+      `INSERT INTO Documents (entity_type, entity_id, filename, original_name, file_size, mime_type, doc_type, description, uploaded_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [entityType, entityId, file.filename, file.originalname, file.size, file.mimetype, docType || 'other', description || null, userName]
+    );
+
+    res.json({ success: true, document: result.rows[0] });
+  } catch (error) {
+    logger.error('Error uploading document', { error: error.message });
+    res.status(500).json({ error: 'Failed to upload document' });
+  }
+});
+
+// GET /api/room-status/documents/download/:id - Download a document
+router.get('/documents/download/:id', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM Documents WHERE id = $1', [req.params.id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Document not found' });
+    const doc = result.rows[0];
+    const filePath = path.join(uploadDir, doc.filename);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
+    res.setHeader('Content-Disposition', `attachment; filename="${doc.original_name}"`);
+    res.setHeader('Content-Type', doc.mime_type || 'application/octet-stream');
+    fs.createReadStream(filePath).pipe(res);
+  } catch (error) {
+    logger.error('Error downloading document', { error: error.message });
+    res.status(500).json({ error: 'Failed to download document' });
+  }
+});
+
+// DELETE /api/room-status/documents/:id - Delete a document
+router.delete('/documents/:id', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM Documents WHERE id = $1', [req.params.id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Document not found' });
+    const doc = result.rows[0];
+    // Remove file from disk
+    const filePath = path.join(uploadDir, doc.filename);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    await pool.query('DELETE FROM Documents WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Error deleting document', { error: error.message });
+    res.status(500).json({ error: 'Failed to delete document' });
   }
 });
 

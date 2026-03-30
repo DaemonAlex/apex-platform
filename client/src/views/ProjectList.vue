@@ -3,16 +3,90 @@ import { h, onMounted, ref } from 'vue';
 import {
   NDataTable, NInput, NSelect, NSpace, NTag, NProgress,
   NPagination, NSpin, NTabs, NTabPane, NCard, NGrid, NGi, NStatistic,
-  NButtonGroup, NButton,
+  NButtonGroup, NButton, NModal, NForm, NFormItem, NInputNumber,
+  useMessage,
 } from 'naive-ui';
 import { useProjectStore } from '../stores/projects';
 import type { ProjectSummary } from '../stores/projects';
 import type { DataTableColumns } from 'naive-ui';
+import { useTheme } from '../composables/useTheme';
 
 const store = useProjectStore();
 const emit = defineEmits<{ (e: 'openProject', id: string): void }>();
+const message = useMessage();
+const { colors } = useTheme();
 
 const activeTab = ref('all');
+
+// Create project modal
+const showCreateModal = ref(false);
+const createLoading = ref(false);
+const createForm = ref({
+  id: '',
+  name: '',
+  type: 'new-build',
+  status: 'planning',
+  client: '',
+  siteLocation: '',
+  businessLine: '',
+  description: '',
+  estimatedBudget: null as number | null,
+  startDate: '',
+  endDate: '',
+});
+
+function generateProjectId() {
+  const prefix = createForm.value.type === 'breakfix' ? 'BF' : createForm.value.type === 'telephony' ? 'TEL' : 'PROJ';
+  const num = String(Date.now()).slice(-6);
+  createForm.value.id = `${prefix}-${num}`;
+}
+
+async function submitCreate() {
+  if (!createForm.value.id || !createForm.value.name) return;
+  createLoading.value = true;
+  try {
+    const payload: Record<string, any> = { ...createForm.value };
+    if (!payload.startDate) delete payload.startDate;
+    if (!payload.endDate) delete payload.endDate;
+    if (payload.estimatedBudget === null) delete payload.estimatedBudget;
+    await store.createProject(payload);
+    message.success('Project created');
+    showCreateModal.value = false;
+    resetCreateForm();
+    loadStats();
+  } catch (e: any) {
+    message.error(e.message || 'Failed to create project');
+  } finally {
+    createLoading.value = false;
+  }
+}
+
+function resetCreateForm() {
+  createForm.value = { id: '', name: '', type: 'new-build', status: 'planning', client: '', siteLocation: '', businessLine: '', description: '', estimatedBudget: null, startDate: '', endDate: '' };
+}
+
+function openCreateModal() {
+  resetCreateForm();
+  generateProjectId();
+  showCreateModal.value = true;
+}
+
+const statusOptions = [
+  { label: 'Planning', value: 'planning' },
+  { label: 'Active', value: 'active' },
+  { label: 'On Hold', value: 'on-hold' },
+  { label: 'Scheduled', value: 'scheduled' },
+];
+
+const businessLineOptions = [
+  { label: 'Corporate AV', value: 'corporate-av' },
+  { label: 'Education', value: 'education' },
+  { label: 'Healthcare', value: 'healthcare' },
+  { label: 'Government', value: 'government' },
+  { label: 'Hospitality', value: 'hospitality' },
+  { label: 'Retail', value: 'retail' },
+  { label: 'Other', value: 'other' },
+];
 
 // Stats computed from full counts (we'll add a stats endpoint)
 const stats = ref({ total: 0, active: 0, overdue: 0, completed: 0, onHold: 0 });
@@ -97,8 +171,8 @@ const columns: DataTableColumns<ProjectSummary> = [
     sorter: true,
     render: (row) => {
       const types: Record<string, string> = {
-        active: 'success', planning: 'default', 'in-progress': 'info',
-        'on-hold': 'warning', completed: 'success', cancelled: 'error',
+        active: 'success', planning: 'info', scheduled: 'info', 'in-progress': 'info',
+        'on-hold': 'warning', completed: 'success', cancelled: 'default',
       };
       const labels: Record<string, string> = {
         active: 'Active', planning: 'Planning', 'in-progress': 'In Progress',
@@ -227,7 +301,10 @@ onMounted(() => {
 
 <template>
   <div>
-    <h1 style="margin: 0 0 16px 0; font-size: 1.5rem;">Projects</h1>
+    <NSpace justify="space-between" align="center" style="margin-bottom: 16px;">
+      <h1 style="margin: 0; font-size: 1.5rem;">Projects</h1>
+      <NButton type="primary" @click="openCreateModal"><i class="ph ph-plus" style="margin-right: 4px;" /> New Project</NButton>
+    </NSpace>
 
     <!-- Stats Cards -->
     <NGrid :x-gap="12" :y-gap="12" :cols="5" style="margin-bottom: 20px;">
@@ -347,7 +424,7 @@ onMounted(() => {
               <div v-if="row.siteLocation" style="font-size: 0.82rem; color: #94a3b8; margin-bottom: 8px;">{{ row.siteLocation }}</div>
 
               <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap;">
-                <NTag :type="({active:'success',planning:'default','on-hold':'warning',completed:'success',cancelled:'error'} as any)[row.status] || 'default'" size="small" :bordered="false">
+                <NTag :type="({active:'success',planning:'info',scheduled:'info','on-hold':'warning',completed:'success',cancelled:'default'} as any)[row.status] || 'default'" size="small" :bordered="false">
                   {{ ({active:'Active',planning:'Planning','on-hold':'On Hold',completed:'Completed',cancelled:'Cancelled'} as any)[row.status] || row.status }}
                 </NTag>
                 <NTag v-if="row.priority" :type="({critical:'error',high:'warning',medium:'info',low:'default'} as any)[row.priority] || 'default'" size="small" :bordered="false">
@@ -397,7 +474,7 @@ onMounted(() => {
             </div>
           </div>
 
-          <NTag :type="({active:'success',planning:'default','on-hold':'warning',completed:'success',cancelled:'error'} as any)[row.status] || 'default'" size="small" :bordered="false" style="flex-shrink: 0;">
+          <NTag :type="({active:'success',planning:'info',scheduled:'info','on-hold':'warning',completed:'success',cancelled:'default'} as any)[row.status] || 'default'" size="small" :bordered="false" style="flex-shrink: 0;">
             {{ ({active:'Active',planning:'Planning','on-hold':'On Hold',completed:'Completed',cancelled:'Cancelled'} as any)[row.status] || row.status }}
           </NTag>
 
@@ -425,5 +502,60 @@ onMounted(() => {
         @update:page="(p: number) => store.fetchProjects(p)"
       />
     </div>
+
+    <!-- Create Project Modal -->
+    <NModal v-model:show="showCreateModal" preset="card" title="New Project" style="width: 600px;" :mask-closable="false">
+      <NForm label-placement="top" size="small">
+        <div style="display: grid; grid-template-columns: 140px 1fr; gap: 12px;">
+          <NFormItem label="Project ID" required>
+            <NInput v-model:value="createForm.id" placeholder="PROJ-123456" />
+          </NFormItem>
+          <NFormItem label="Project Name" required>
+            <NInput v-model:value="createForm.name" placeholder="Enter project name" />
+          </NFormItem>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+          <NFormItem label="Type">
+            <NSelect v-model:value="createForm.type" :options="typeOptions" @update:value="generateProjectId" />
+          </NFormItem>
+          <NFormItem label="Status">
+            <NSelect v-model:value="createForm.status" :options="statusOptions" />
+          </NFormItem>
+          <NFormItem label="Business Line">
+            <NSelect v-model:value="createForm.businessLine" :options="businessLineOptions" clearable placeholder="Select..." />
+          </NFormItem>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <NFormItem label="Client">
+            <NInput v-model:value="createForm.client" placeholder="Client name" />
+          </NFormItem>
+          <NFormItem label="Site Location">
+            <NInput v-model:value="createForm.siteLocation" placeholder="e.g., 123 Main St, Floor 3" />
+          </NFormItem>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+          <NFormItem label="Start Date">
+            <input v-model="createForm.startDate" type="date" :style="`width:100%;padding:6px 10px;border:1px solid ${colors.inputBorder};border-radius:3px;background:${colors.inputBg};color:${colors.inputText};`" />
+          </NFormItem>
+          <NFormItem label="End Date">
+            <input v-model="createForm.endDate" type="date" :style="`width:100%;padding:6px 10px;border:1px solid ${colors.inputBorder};border-radius:3px;background:${colors.inputBg};color:${colors.inputText};`" />
+          </NFormItem>
+          <NFormItem label="Est. Budget">
+            <NInputNumber v-model:value="createForm.estimatedBudget" :min="0" :step="1000" placeholder="$0" style="width: 100%;">
+              <template #prefix>$</template>
+            </NInputNumber>
+          </NFormItem>
+        </div>
+        <NFormItem label="Description">
+          <NInput v-model:value="createForm.description" type="textarea" :rows="2" placeholder="Brief project description..." />
+        </NFormItem>
+      </NForm>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="showCreateModal = false">Cancel</NButton>
+          <NButton type="primary" :loading="createLoading" :disabled="!createForm.id || !createForm.name" @click="submitCreate">Create Project</NButton>
+        </NSpace>
+      </template>
+    </NModal>
   </div>
 </template>

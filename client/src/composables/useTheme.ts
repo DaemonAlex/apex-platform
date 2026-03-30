@@ -141,6 +141,9 @@ export function useTheme() {
     tooltipBg: '#1e2130',
     tooltipBorder: '#2a2d3e',
     tooltipText: '#eef0f4',
+    inputBg: '#161822',
+    inputBorder: '#2a2d3e',
+    inputText: '#eef0f4',
   } : {
     textMuted: '#64748b',
     textSecondary: '#475569',
@@ -151,6 +154,9 @@ export function useTheme() {
     tooltipBg: '#ffffff',
     tooltipBorder: '#e2e8f0',
     tooltipText: '#1e293b',
+    inputBg: '#ffffff',
+    inputBorder: '#e2e8f0',
+    inputText: '#1e293b',
   });
 
   return {

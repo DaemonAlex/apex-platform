@@ -3,7 +3,7 @@ import { ref, onMounted } from 'vue';
 import {
   NMessageProvider, NConfigProvider,
   NTabs, NTabPane, NCard, NGrid, NGi, NStatistic, NProgress,
-  NDataTable, NTag, NEmpty, NSpin,
+  NDataTable, NTag, NEmpty, NSpin, NButton,
 } from 'naive-ui';
 import { useTheme } from './composables/useTheme';
 import { h } from 'vue';
@@ -15,6 +15,8 @@ const budget = ref<any>(null);
 const timeline = ref<any>(null);
 const myTasks = ref<any>(null);
 const compliance = ref<any>(null);
+const expandedProject = ref<any>(null);
+const expandLoading = ref(false);
 
 const tk = () => localStorage.getItem('apex_token');
 async function api(path: string) {
@@ -47,6 +49,23 @@ onMounted(async () => {
 function fmt(v: number) {
   if (Math.abs(v) >= 1000000) return '$' + (v / 1000000).toFixed(1) + 'M';
   return '$' + (v / 1000).toFixed(0) + 'K';
+}
+
+async function drillDown(projectId: string) {
+  if (expandedProject.value?.id === projectId) {
+    expandedProject.value = null;
+    return;
+  }
+  expandLoading.value = true;
+  try {
+    expandedProject.value = await api(`/projects/${projectId}`);
+  } finally {
+    expandLoading.value = false;
+  }
+}
+
+function closeDrillDown() {
+  expandedProject.value = null;
 }
 
 const { naiveTheme, themeOverrides } = useTheme();
@@ -193,8 +212,8 @@ const { naiveTheme, themeOverrides } = useTheme();
       </NGrid>
       <NCard size="small" title="Project Budget Detail">
         <NDataTable :columns="[
-          { title: 'Project', key: 'name', sorter: 'default' as any, render: (r: any) => h('span', { style: 'font-weight:500;' }, r.name) },
-          { title: 'Status', key: 'status', width: 100, render: (r: any) => h(NTag, { type: ({active:'success','on-hold':'warning',completed:'success'} as any)[r.status] || 'default', size: 'small', bordered: false }, () => r.status) },
+          { title: 'Project', key: 'name', sorter: 'default' as any, render: (r: any) => h('span', { style: 'font-weight:500;cursor:pointer;color:#38bdf8;', onClick: () => drillDown(r.id) }, [r.name, ' ', h('i', { class: 'ph ph-arrow-square-out', style: 'font-size:12px;opacity:0.5;' })]) },
+          { title: 'Status', key: 'status', width: 100, render: (r: any) => h(NTag, { type: ({active:'success','on-hold':'warning',completed:'success',planning:'info',scheduled:'info',cancelled:'default'} as any)[r.status] || 'default', size: 'small', bordered: false }, () => r.status) },
           { title: 'Planned', key: 'planned', width: 100, align: 'right' as any, sorter: 'default' as any, render: (r: any) => fmt(r.planned) },
           { title: 'Actual', key: 'actual', width: 100, align: 'right' as any, sorter: 'default' as any, render: (r: any) => fmt(r.actual) },
           { title: 'Variance', key: 'variance', width: 130, align: 'right' as any, sorter: 'default' as any, render: (r: any) => h('span', { style: 'color:' + (r.variance > 0 ? '#ef4444' : '#22c55e') + ';font-weight:500;' }, (r.variance > 0 ? '+' : '') + fmt(Math.abs(r.variance)) + ' (' + (r.variancePercent > 0 ? '+' : '') + r.variancePercent + '%)') },
@@ -212,7 +231,7 @@ const { naiveTheme, themeOverrides } = useTheme();
 
       <NCard v-if="timeline.overdue?.length" size="small" title="Overdue Projects" style="margin-bottom:16px;border-left:3px solid #ef4444;">
         <NDataTable :columns="[
-          { title: 'Project', key: 'name', render: (r: any) => h('span', { style: 'font-weight:500;' }, r.name) },
+          { title: 'Project', key: 'name', render: (r: any) => h('span', { style: 'font-weight:500;cursor:pointer;color:#38bdf8;', onClick: () => drillDown(r.id) }, r.name) },
           { title: 'Type', key: 'type', width: 100 },
           { title: 'Progress', key: 'progress', width: 100, render: (r: any) => h(NProgress, { type: 'line', percentage: r.progress || 0, height: 8, borderRadius: 4, showIndicator: false, style: 'width:60px;display:inline-block;' }) },
           { title: 'Days Overdue', key: 'daysOverdue', width: 110, align: 'right' as any, render: (r: any) => h('span', { style: 'color:#ef4444;font-weight:600;' }, r.daysOverdue + 'd') },
@@ -221,7 +240,7 @@ const { naiveTheme, themeOverrides } = useTheme();
 
       <NCard size="small" title="Upcoming Deadlines" style="margin-bottom:16px;">
         <NDataTable v-if="timeline.upcoming?.length" :columns="[
-          { title: 'Project', key: 'name', render: (r: any) => h('span', { style: 'font-weight:500;' }, r.name) },
+          { title: 'Project', key: 'name', render: (r: any) => h('span', { style: 'font-weight:500;cursor:pointer;color:#38bdf8;', onClick: () => drillDown(r.id) }, r.name) },
           { title: 'Type', key: 'type', width: 100 },
           { title: 'Progress', key: 'progress', width: 100, render: (r: any) => h(NProgress, { type: 'line', percentage: r.progress || 0, height: 8, borderRadius: 4, showIndicator: false, style: 'width:60px;display:inline-block;' }) },
           { title: 'Due In', key: 'daysUntilDue', width: 90, align: 'right' as any, render: (r: any) => h('span', { style: 'color:' + (r.daysUntilDue <= 7 ? '#f59e0b' : '#94a3b8') + ';font-weight:500;' }, r.daysUntilDue + 'd') },
@@ -273,6 +292,38 @@ const { naiveTheme, themeOverrides } = useTheme();
     </template>
 
   </NSpin>
+
+  <!-- Drill-down panel -->
+  <NCard v-if="expandedProject" size="small" style="margin-top:16px;border-left:3px solid #38bdf8;" :title="expandedProject.name || 'Project Detail'">
+    <template #header-extra>
+      <NButton text size="small" @click="closeDrillDown"><i class="ph ph-x" style="font-size:18px;" /></NButton>
+    </template>
+    <NSpin :show="expandLoading">
+      <NGrid :x-gap="12" :y-gap="12" :cols="4" style="margin-bottom:16px;">
+        <NGi><NStatistic label="Status" :value="expandedProject.status || '-'" /></NGi>
+        <NGi><NStatistic label="Type" :value="expandedProject.type || '-'" /></NGi>
+        <NGi><NStatistic label="Budget" :value="fmt(expandedProject.estimatedBudget || expandedProject.budget || 0)" /></NGi>
+        <NGi><NStatistic label="Tasks" :value="(expandedProject.tasks?.length || 0) + ' total'" /></NGi>
+      </NGrid>
+      <div v-if="expandedProject.tasks?.length">
+        <div style="font-weight:600;margin-bottom:8px;">Tasks</div>
+        <NDataTable
+          :columns="[
+            { title: 'Task', key: 'name', render: (r: any) => h('span', { style: 'font-weight:500;' }, r.name) },
+            { title: 'Status', key: 'status', width: 110, render: (r: any) => h(NTag, { type: ({'not-started':'default','in-progress':'info',completed:'success','on-hold':'warning'} as any)[r.status] || 'default', size: 'small', bordered: false }, () => r.status || '-') },
+            { title: 'Assignee', key: 'assignee', width: 140, render: (r: any) => r.assignee || '-' },
+            { title: 'Est. Hours', key: 'estimatedHours', width: 90, align: 'right' as any, render: (r: any) => r.estimatedHours ? r.estimatedHours + 'h' : '-' },
+          ]"
+          :data="expandedProject.tasks"
+          :row-key="(r: any) => r.id || r.name"
+          :bordered="false"
+          size="small"
+          striped
+        />
+      </div>
+      <NEmpty v-else description="No tasks" />
+    </NSpin>
+  </NCard>
 </div>
 </NConfigProvider>
 </NMessageProvider>

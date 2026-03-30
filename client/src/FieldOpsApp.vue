@@ -5,6 +5,7 @@ import {
   NTabs, NTabPane, NCard, NGrid, NGi, NStatistic,
   NDataTable, NTag, NEmpty, NSpin, NSpace, NSelect, NInput,
   NButtonGroup, NButton, NCalendar,
+  NModal, NForm, NFormItem, NProgress, createDiscreteApi,
 } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
 import { useTheme } from './composables/useTheme';
@@ -102,6 +103,14 @@ const columns: DataTableColumns<any> = [
       return h(NTag, { type: (t[row.status] || 'default') as any, size: 'small', bordered: false }, () => row.status || '-');
     },
   },
+  {
+    title: '', key: 'actions', width: 160,
+    render: (row) => h(NSpace, { size: 'small' }, () => [
+      h(NButton, { size: 'tiny', secondary: true, onClick: () => openDetail2(row) }, () => 'View'),
+      h(NButton, { size: 'tiny', secondary: true, onClick: () => openEdit(row) }, () => 'Edit'),
+      h(NButton, { size: 'tiny', type: 'error', ghost: true, onClick: () => deleteFieldOp(row.id) }, () => [h('i', { class: 'ph ph-trash' })]),
+    ]),
+  },
 ];
 
 // Calendar helpers
@@ -119,13 +128,160 @@ function getOpsForDate(timestamp: number) {
 onMounted(load);
 
 const { naiveTheme, themeOverrides } = useTheme();
+
+const { message: msg } = createDiscreteApi(['message']);
+
+// Create/Edit modal
+const showModal = ref(false);
+const editingId = ref<number | null>(null);
+const saving = ref(false);
+const form = ref({
+  taskName: '', projectName: '', type: 'Installation', location: '',
+  scheduledDate: '', startTime: '9:00 AM', endTime: '5:00 PM',
+  assignee: '', notes: '', status: 'scheduled',
+});
+
+// Report data
+const report = ref<any>(null);
+const reportLoading = ref(false);
+
+// Detail modal with notes
+const showDetail = ref(false);
+const detailOp = ref<any>(null);
+const detailNotes = ref<any[]>([]);
+const detailLoading = ref(false);
+const newNote = ref('');
+const addingNote = ref(false);
+
+async function openDetail2(op: any) {
+  detailOp.value = op;
+  showDetail.value = true;
+  detailLoading.value = true;
+  try {
+    const res = await fetch(`/api/fieldops/${op.id}/notes`, { headers: { Authorization: 'Bearer ' + token() } });
+    const data = await res.json();
+    detailNotes.value = data.notes || [];
+  } catch { detailNotes.value = []; }
+  finally { detailLoading.value = false; }
+}
+
+async function addNote() {
+  if (!newNote.value.trim() || !detailOp.value) return;
+  addingNote.value = true;
+  try {
+    await fetch(`/api/fieldops/${detailOp.value.id}/notes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+      body: JSON.stringify({ content: newNote.value.trim() }),
+    });
+    newNote.value = '';
+    const res = await fetch(`/api/fieldops/${detailOp.value.id}/notes`, { headers: { Authorization: 'Bearer ' + token() } });
+    const data = await res.json();
+    detailNotes.value = data.notes || [];
+    msg.success('Note added');
+  } catch { msg.error('Failed to add note'); }
+  finally { addingNote.value = false; }
+}
+
+async function deleteNote(noteId: number) {
+  await fetch(`/api/fieldops/notes/${noteId}`, {
+    method: 'DELETE', headers: { Authorization: 'Bearer ' + token() },
+  });
+  detailNotes.value = detailNotes.value.filter(n => n.id !== noteId);
+}
+
+function openCreate() {
+  editingId.value = null;
+  form.value = { taskName: '', projectName: '', type: 'Installation', location: '', scheduledDate: '', startTime: '9:00 AM', endTime: '5:00 PM', assignee: '', notes: '', status: 'scheduled' };
+  showModal.value = true;
+}
+
+function openEdit(op: any) {
+  editingId.value = op.id;
+  form.value = {
+    taskName: op.taskName || op.task_name || '',
+    projectName: op.projectName || op.project_name || '',
+    type: op.type || op.workType || 'Installation',
+    location: op.location || '',
+    scheduledDate: (op.date || op.scheduledDate || op.scheduled_date || '').split('T')[0],
+    startTime: op.startTime || op.start_time || '9:00 AM',
+    endTime: op.endTime || op.end_time || '5:00 PM',
+    assignee: op.assignee || op.assignedTo || '',
+    notes: op.notes || '',
+    status: op.status || 'scheduled',
+  };
+  showModal.value = true;
+}
+
+async function saveFieldOp() {
+  if (!form.value.taskName.trim()) { msg.error('Task name required'); return; }
+  saving.value = true;
+  try {
+    if (editingId.value) {
+      await fetch('/api/fieldops/' + editingId.value, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify(form.value),
+      });
+      msg.success('Field work updated');
+    } else {
+      await fetch('/api/fieldops', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify(form.value),
+      });
+      msg.success('Field work created');
+    }
+    showModal.value = false;
+    await load();
+  } catch (e: any) { msg.error(e.message || 'Failed'); }
+  finally { saving.value = false; }
+}
+
+async function deleteFieldOp(id: number) {
+  await fetch('/api/fieldops/' + id, {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer ' + token() },
+  });
+  msg.success('Deleted');
+  await load();
+}
+
+async function loadReport() {
+  reportLoading.value = true;
+  try {
+    const res = await fetch('/api/fieldops/report', { headers: { Authorization: 'Bearer ' + token() } });
+    report.value = await res.json();
+  } finally { reportLoading.value = false; }
+}
+
+const typeOptions = [
+  { label: 'Site Survey', value: 'Site Survey' },
+  { label: 'Installation', value: 'Installation' },
+  { label: 'Commissioning', value: 'Commissioning' },
+  { label: 'Service Call', value: 'Service Call' },
+  { label: 'Maintenance', value: 'Maintenance' },
+  { label: 'Training', value: 'Training' },
+  { label: 'Decommission', value: 'Decommission' },
+];
+
+const statusEditOptions = [
+  { label: 'Scheduled', value: 'scheduled' },
+  { label: 'In Progress', value: 'in-progress' },
+  { label: 'Pending', value: 'pending' },
+  { label: 'Completed', value: 'completed' },
+  { label: 'Cancelled', value: 'cancelled' },
+];
 </script>
 
 <template>
 <NMessageProvider>
 <NConfigProvider :theme="naiveTheme" :theme-overrides="themeOverrides">
 <div style="background:transparent;">
-  <h1 style="margin:0 0 16px 0;font-size:1.5rem;">Field Operations</h1>
+  <NSpace justify="space-between" align="center" style="margin-bottom:16px;">
+    <h1 style="margin:0;font-size:1.5rem;">Field Operations</h1>
+    <NButton type="primary" @click="openCreate"><i class="ph ph-plus" style="margin-right:4px;" /> Schedule Work</NButton>
+  </NSpace>
 
   <!-- Stats -->
   <NGrid :x-gap="12" :y-gap="12" :cols="5" style="margin-bottom:20px;">
@@ -137,12 +293,13 @@ const { naiveTheme, themeOverrides } = useTheme();
   </NGrid>
 
   <!-- Tabs -->
-  <NTabs :value="activeTab" type="line" @update:value="(v: string) => { activeTab = v; filterStatus = null; }" style="margin-bottom:16px;">
+  <NTabs :value="activeTab" type="line" @update:value="(v: string) => { activeTab = v; filterStatus = null; if (v === 'reports' && !report) loadReport(); }" style="margin-bottom:16px;">
     <NTabPane name="all" tab="All Work" />
     <NTabPane name="today" tab="Today" />
     <NTabPane name="calendar" tab="Calendar" />
     <NTabPane name="pending" :tab="'Pending (' + stats.pending + ')'" />
     <NTabPane name="completed" tab="Completed" />
+    <NTabPane name="reports" tab="Reports" />
   </NTabs>
 
   <!-- Filters (hidden on calendar tab) -->
@@ -165,7 +322,7 @@ const { naiveTheme, themeOverrides } = useTheme();
 
     <!-- CARDS -->
     <div v-else-if="viewMode==='cards' && activeTab !== 'calendar'" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;">
-      <NCard v-for="f in filtered" :key="f.id" size="small" hoverable>
+      <NCard v-for="f in filtered" :key="f.id" size="small" hoverable style="cursor:pointer;" @click="openDetail2(f)">
         <div style="display:flex;align-items:flex-start;gap:12px;">
           <i :class="'ph ' + (typeIcons[f.type]?.icon || 'ph-briefcase')" :style="{ fontSize:'1.6rem', color: typeIcons[f.type]?.color || '#64748b' }" />
           <div style="flex:1;">
@@ -180,16 +337,28 @@ const { naiveTheme, themeOverrides } = useTheme();
             </div>
           </div>
         </div>
+        <template #action>
+          <NSpace size="small">
+            <NButton size="tiny" secondary @click.stop="openEdit(f)">Edit</NButton>
+            <NButton size="tiny" type="error" ghost @click.stop="deleteFieldOp(f.id)"><i class="ph ph-trash" /></NButton>
+          </NSpace>
+        </template>
       </NCard>
     </div>
 
     <!-- COMPACT -->
     <div v-else-if="activeTab !== 'calendar'" style="display:flex;flex-direction:column;gap:6px;">
-      <div v-for="f in filtered" :key="f.id" style="display:flex;align-items:center;gap:14px;padding:10px 16px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);">
+      <div v-for="f in filtered" :key="f.id" style="display:flex;align-items:center;gap:14px;padding:10px 16px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);cursor:pointer;transition:background 0.15s;" @click="openDetail2(f)"
+        @mouseenter="($event.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.03)'"
+        @mouseleave="($event.currentTarget as HTMLElement).style.background = ''">
         <i :class="'ph ' + (typeIcons[f.type]?.icon || 'ph-briefcase')" :style="{ fontSize:'1.2rem', color: typeIcons[f.type]?.color || '#64748b' }" />
         <div style="flex:1;"><div style="font-weight:500;">{{ f.taskName || f.title }}</div><div style="font-size:0.8rem;color:#94a3b8;">{{ f.assignee }} - {{ f.location }}</div></div>
         <NTag :type="({scheduled:'info','in-progress':'warning',completed:'success',pending:'default'} as any)[f.status] || 'default'" size="small" :bordered="false" style="flex-shrink:0;">{{ f.status }}</NTag>
         <span style="width:80px;text-align:right;font-size:0.8rem;color:#94a3b8;">{{ (f.date || f.scheduledDate) ? new Date(f.date || f.scheduledDate).toLocaleDateString() : '' }}</span>
+        <NSpace size="small" style="flex-shrink:0;" @click.stop>
+          <NButton size="tiny" secondary @click="openEdit(f)">Edit</NButton>
+          <NButton size="tiny" type="error" ghost @click="deleteFieldOp(f.id)"><i class="ph ph-trash" /></NButton>
+        </NSpace>
       </div>
     </div>
 
@@ -204,8 +373,9 @@ const { naiveTheme, themeOverrides } = useTheme();
               fontSize: '0.72rem', padding: '2px 4px', marginBottom: '2px', borderRadius: '3px',
               background: op.status === 'completed' ? 'rgba(34,197,94,0.15)' : op.status === 'in-progress' ? 'rgba(245,158,11,0.15)' : 'rgba(14,165,233,0.15)',
               color: op.status === 'completed' ? '#22c55e' : op.status === 'in-progress' ? '#f59e0b' : '#0ea5e9',
-              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'default',
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer',
             }"
+            @click="openDetail2(op)"
             :title="(op.task_name || op.taskName) + ' - ' + (op.assignee || '') + ' - ' + (op.type || '')">
             <i :class="'ph ' + (typeIcons[op.type]?.icon || 'ph-briefcase')" style="margin-right: 2px;" />
             {{ op.task_name || op.taskName }}
@@ -213,7 +383,129 @@ const { naiveTheme, themeOverrides } = useTheme();
         </template>
       </NCalendar>
     </template>
+
+    <!-- REPORTS -->
+    <template v-if="activeTab === 'reports'">
+      <NSpin :show="reportLoading">
+        <div v-if="report">
+          <NGrid :x-gap="12" :y-gap="12" :cols="4" style="margin-bottom:20px;">
+            <NGi><NCard size="small" style="text-align:center;"><NStatistic label="Completion Rate" :value="report.summary?.completionRate + '%'" /></NCard></NGi>
+            <NGi><NCard size="small" style="text-align:center;"><NStatistic label="Total Work Orders" :value="report.summary?.total" /></NCard></NGi>
+            <NGi><NCard size="small" style="text-align:center;"><NStatistic label="Completed" :value="report.summary?.completed"><template #prefix><span style="color:#22c55e;">&#9679;</span></template></NStatistic></NCard></NGi>
+            <NGi><NCard size="small" style="text-align:center;"><NStatistic label="Open" :value="(report.summary?.scheduled || 0) + (report.summary?.inProgress || 0) + (report.summary?.pending || 0)"><template #prefix><span style="color:#0ea5e9;">&#9679;</span></template></NStatistic></NCard></NGi>
+          </NGrid>
+
+          <NGrid :x-gap="16" :y-gap="16" :cols="2">
+            <NGi>
+              <NCard size="small" title="By Type">
+                <div v-for="t in report.byType" :key="t.type" style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+                  <span style="font-weight:500;">{{ t.type || 'Other' }}</span>
+                  <NSpace align="center" :size="12">
+                    <NProgress type="line" :percentage="t.count > 0 ? Math.round((t.completed / t.count) * 100) : 0" :height="8" :border-radius="4" :show-indicator="false" style="width:80px;" />
+                    <span style="font-size:0.85rem;color:#94a3b8;">{{ t.completed }}/{{ t.count }}</span>
+                  </NSpace>
+                </div>
+              </NCard>
+            </NGi>
+            <NGi>
+              <NCard size="small" title="By Technician">
+                <div v-for="a in report.byAssignee" :key="a.assignee" style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+                  <span style="font-weight:500;">{{ a.assignee }}</span>
+                  <NSpace align="center" :size="12">
+                    <NProgress type="line" :percentage="a.count > 0 ? Math.round((a.completed / a.count) * 100) : 0" :height="8" :border-radius="4" :show-indicator="false" style="width:80px;" />
+                    <span style="font-size:0.85rem;color:#94a3b8;">{{ a.completed }}/{{ a.count }}</span>
+                  </NSpace>
+                </div>
+              </NCard>
+            </NGi>
+          </NGrid>
+        </div>
+        <NEmpty v-else-if="!reportLoading" description="No report data" />
+      </NSpin>
+    </template>
   </NSpin>
+
+  <!-- Create/Edit Modal -->
+  <NModal v-model:show="showModal" preset="card" :title="editingId ? 'Edit Field Work' : 'Schedule Field Work'" style="width:560px;" :mask-closable="false">
+    <NForm label-placement="top" size="small">
+      <NFormItem label="Task Name" required><NInput v-model:value="form.taskName" placeholder="e.g., Install Room Bar Pro" /></NFormItem>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <NFormItem label="Project"><NInput v-model:value="form.projectName" placeholder="Project name" /></NFormItem>
+        <NFormItem label="Type"><NSelect v-model:value="form.type" :options="typeOptions" /></NFormItem>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <NFormItem label="Location"><NInput v-model:value="form.location" placeholder="Building / Room" /></NFormItem>
+        <NFormItem label="Assignee"><NInput v-model:value="form.assignee" placeholder="Technician name" /></NFormItem>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+        <NFormItem label="Date"><NInput v-model:value="form.scheduledDate" placeholder="YYYY-MM-DD" /></NFormItem>
+        <NFormItem label="Start"><NInput v-model:value="form.startTime" placeholder="9:00 AM" /></NFormItem>
+        <NFormItem label="End"><NInput v-model:value="form.endTime" placeholder="5:00 PM" /></NFormItem>
+      </div>
+      <div v-if="editingId" style="margin-bottom:12px;">
+        <NFormItem label="Status"><NSelect v-model:value="form.status" :options="statusEditOptions" /></NFormItem>
+      </div>
+      <NFormItem label="Notes"><NInput v-model:value="form.notes" type="textarea" :rows="2" /></NFormItem>
+    </NForm>
+    <template #footer>
+      <NSpace justify="end">
+        <NButton @click="showModal = false">Cancel</NButton>
+        <NButton type="primary" :loading="saving" :disabled="!form.taskName.trim()" @click="saveFieldOp">{{ editingId ? 'Save Changes' : 'Schedule' }}</NButton>
+      </NSpace>
+    </template>
+  </NModal>
+
+  <!-- Detail/Notes Modal -->
+  <NModal v-model:show="showDetail" preset="card" :title="detailOp?.taskName || detailOp?.task_name || 'Field Work'" style="width:640px;">
+    <template v-if="detailOp">
+      <!-- Header info -->
+      <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+        <NTag :type="({scheduled:'info','in-progress':'warning',completed:'success',pending:'default',cancelled:'error'} as any)[detailOp.status] || 'default'" size="medium">{{ detailOp.status }}</NTag>
+        <NTag v-if="detailOp.type" size="medium" :bordered="false">{{ detailOp.type }}</NTag>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;font-size:0.9rem;margin-bottom:20px;">
+        <div v-if="detailOp.projectName"><span style="color:#94a3b8;">Project:</span> {{ detailOp.projectName || detailOp.project_name }}</div>
+        <div v-if="detailOp.location"><span style="color:#94a3b8;">Location:</span> {{ detailOp.location }}</div>
+        <div v-if="detailOp.assignee || detailOp.assignedTo"><span style="color:#94a3b8;">Assignee:</span> {{ detailOp.assignee || detailOp.assignedTo }}</div>
+        <div><span style="color:#94a3b8;">Date:</span> {{ (detailOp.date || detailOp.scheduledDate || detailOp.scheduled_date) ? new Date(detailOp.date || detailOp.scheduledDate || detailOp.scheduled_date).toLocaleDateString() : '-' }}</div>
+        <div v-if="detailOp.startTime || detailOp.start_time"><span style="color:#94a3b8;">Time:</span> {{ detailOp.startTime || detailOp.start_time }} - {{ detailOp.endTime || detailOp.end_time }}</div>
+        <div v-if="detailOp.completedBy || detailOp.completed_by"><span style="color:#94a3b8;">Completed by:</span> {{ detailOp.completedBy || detailOp.completed_by }}</div>
+      </div>
+      <div v-if="detailOp.notes" style="padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);margin-bottom:20px;white-space:pre-wrap;font-size:0.9rem;">{{ detailOp.notes }}</div>
+
+      <!-- Notes log -->
+      <div style="font-weight:600;font-size:0.95rem;margin-bottom:12px;"><i class="ph ph-note-pencil" style="margin-right:4px;" /> Activity Notes</div>
+
+      <!-- Add note -->
+      <div style="display:flex;gap:8px;margin-bottom:16px;">
+        <NInput v-model:value="newNote" placeholder="Add a note about this visit..." size="small" style="flex:1;" @keyup.enter="addNote" />
+        <NButton type="primary" size="small" :loading="addingNote" :disabled="!newNote.trim()" @click="addNote">Add</NButton>
+      </div>
+
+      <!-- Notes list -->
+      <NSpin :show="detailLoading">
+        <div v-for="note in detailNotes" :key="note.id"
+          style="padding:10px 12px;border-radius:6px;border-left:3px solid #0ea5e9;margin-bottom:8px;background:rgba(14,165,233,0.04);">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div style="flex:1;">
+              <div style="white-space:pre-wrap;font-size:0.9rem;">{{ note.content }}</div>
+              <div style="font-size:0.78rem;color:#94a3b8;margin-top:4px;">
+                {{ note.author }} - {{ new Date(note.createdAt).toLocaleString() }}
+              </div>
+            </div>
+            <NButton text size="tiny" @click="deleteNote(note.id)" style="color:#94a3b8;flex-shrink:0;"><i class="ph ph-x" /></NButton>
+          </div>
+        </div>
+        <NEmpty v-if="!detailLoading && detailNotes.length === 0" description="No notes yet. Add context about this visit." />
+      </NSpin>
+    </template>
+    <template #action>
+      <NSpace justify="end">
+        <NButton @click="showDetail = false">Close</NButton>
+        <NButton secondary @click="showDetail = false; openEdit(detailOp)">Edit</NButton>
+      </NSpace>
+    </template>
+  </NModal>
 </div>
 </NConfigProvider>
 </NMessageProvider>

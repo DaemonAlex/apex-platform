@@ -89,52 +89,102 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Update field op status
+// Update field op - all fields
 router.put('/:id', async (req, res) => {
   try {
-    const { status, notes, completedBy } = req.body;
+    const { status, notes, completedBy, taskName, type, location,
+            scheduledDate, startTime, endTime, assignee, estimatedDuration } = req.body;
     const updates = [];
     const params = [];
-    let paramCount = 0;
+    let i = 0;
 
     if (status) {
-      paramCount++;
-      updates.push(`status = $${paramCount}`);
-      params.push(status);
+      updates.push(`status = $${++i}`); params.push(status);
       if (status === 'completed') {
-        paramCount++;
-        updates.push(`completed_at = $${paramCount}`);
-        params.push(new Date().toISOString());
-        if (completedBy) {
-          paramCount++;
-          updates.push(`completed_by = $${paramCount}`);
-          params.push(completedBy);
-        }
+        updates.push(`completed_at = $${++i}`); params.push(new Date().toISOString());
+        if (completedBy) { updates.push(`completed_by = $${++i}`); params.push(completedBy); }
       }
     }
-    if (notes !== undefined) {
-      paramCount++;
-      updates.push(`notes = $${paramCount}`);
-      params.push(notes);
-    }
+    if (notes !== undefined) { updates.push(`notes = $${++i}`); params.push(notes); }
+    if (taskName !== undefined) { updates.push(`task_name = $${++i}`); params.push(taskName); }
+    if (type !== undefined) { updates.push(`type = $${++i}`); params.push(type); }
+    if (location !== undefined) { updates.push(`location = $${++i}`); params.push(location); }
+    if (scheduledDate !== undefined) { updates.push(`scheduled_date = $${++i}`); params.push(scheduledDate); }
+    if (startTime !== undefined) { updates.push(`start_time = $${++i}`); params.push(startTime); }
+    if (endTime !== undefined) { updates.push(`end_time = $${++i}`); params.push(endTime); }
+    if (assignee !== undefined) { updates.push(`assignee = $${++i}`); params.push(assignee); }
+    if (estimatedDuration !== undefined) { updates.push(`estimated_duration = $${++i}`); params.push(estimatedDuration); }
+
+    if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
 
     updates.push('updated_at = NOW()');
-    paramCount++;
     params.push(req.params.id);
 
     const result = await pool.query(
-      `UPDATE fieldops SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING *`,
+      `UPDATE fieldops SET ${updates.join(', ')} WHERE id = $${++i} RETURNING *`,
       params
     );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Field op not found' });
-    }
-
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Field op not found' });
     res.json({ fieldOp: mapFieldOpsRow(result.rows[0]) });
   } catch (error) {
     logger.error('Update field op error', { error: error.message });
     res.status(500).json({ error: 'Failed to update field op' });
+  }
+});
+
+// GET /api/fieldops/report - Field ops reporting summary
+router.get('/report', async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    let dateFilter = '';
+    const params = [];
+    if (from) { params.push(from); dateFilter += ` AND scheduled_date >= $${params.length}`; }
+    if (to) { params.push(to); dateFilter += ` AND scheduled_date <= $${params.length}`; }
+
+    const stats = await pool.query(`
+      SELECT
+        COUNT(*) as total,
+        COUNT(*) FILTER (WHERE status = 'completed') as completed,
+        COUNT(*) FILTER (WHERE status = 'scheduled') as scheduled,
+        COUNT(*) FILTER (WHERE status = 'in-progress') as in_progress,
+        COUNT(*) FILTER (WHERE status = 'pending') as pending,
+        COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled
+      FROM fieldops WHERE 1=1 ${dateFilter}
+    `, params);
+
+    const byType = await pool.query(`
+      SELECT type, COUNT(*) as count, COUNT(*) FILTER (WHERE status = 'completed') as completed
+      FROM fieldops WHERE 1=1 ${dateFilter} GROUP BY type ORDER BY count DESC
+    `, params);
+
+    const byAssignee = await pool.query(`
+      SELECT assignee, COUNT(*) as count, COUNT(*) FILTER (WHERE status = 'completed') as completed
+      FROM fieldops WHERE assignee IS NOT NULL ${dateFilter} GROUP BY assignee ORDER BY count DESC
+    `, params);
+
+    const byMonth = await pool.query(`
+      SELECT TO_CHAR(scheduled_date, 'YYYY-MM') as month, COUNT(*) as count,
+        COUNT(*) FILTER (WHERE status = 'completed') as completed
+      FROM fieldops WHERE scheduled_date IS NOT NULL ${dateFilter}
+      GROUP BY month ORDER BY month DESC LIMIT 12
+    `, params);
+
+    const s = stats.rows[0];
+    res.json({
+      summary: {
+        total: parseInt(s.total), completed: parseInt(s.completed),
+        scheduled: parseInt(s.scheduled), inProgress: parseInt(s.in_progress),
+        pending: parseInt(s.pending), cancelled: parseInt(s.cancelled),
+        completionRate: parseInt(s.total) > 0 ? Math.round((parseInt(s.completed) / parseInt(s.total)) * 100) : 0,
+      },
+      byType: byType.rows.map(r => ({ type: r.type, count: parseInt(r.count), completed: parseInt(r.completed) })),
+      byAssignee: byAssignee.rows.map(r => ({ assignee: r.assignee, count: parseInt(r.count), completed: parseInt(r.completed) })),
+      byMonth: byMonth.rows.map(r => ({ month: r.month, count: parseInt(r.count), completed: parseInt(r.completed) })),
+    });
+  } catch (error) {
+    logger.error('Field ops report error', { error: error.message });
+    res.status(500).json({ error: 'Failed to generate report' });
   }
 });
 
@@ -192,5 +242,71 @@ function mapFieldOpsRow(row) {
     updatedAt: row.updated_at
   };
 }
+
+// ==================== FIELD OP NOTES ====================
+
+// Ensure notes table
+async function ensureNotesTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS FieldOpNotes (
+      id SERIAL PRIMARY KEY,
+      fieldop_id INTEGER NOT NULL,
+      author VARCHAR(255) NOT NULL,
+      content TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+}
+let notesTableReady = false;
+
+// GET /api/fieldops/:id/notes
+router.get('/:id/notes', async (req, res) => {
+  try {
+    if (!notesTableReady) { await ensureNotesTable(); notesTableReady = true; }
+    const result = await pool.query(
+      'SELECT * FROM FieldOpNotes WHERE fieldop_id = $1 ORDER BY created_at DESC',
+      [req.params.id]
+    );
+    res.json({
+      notes: result.rows.map(r => ({
+        id: r.id, fieldopId: r.fieldop_id, author: r.author,
+        content: r.content, createdAt: r.created_at,
+      })),
+    });
+  } catch (error) {
+    logger.error('Error fetching field op notes', { error: error.message });
+    res.status(500).json({ error: 'Failed to fetch notes' });
+  }
+});
+
+// POST /api/fieldops/:id/notes
+router.post('/:id/notes', async (req, res) => {
+  try {
+    if (!notesTableReady) { await ensureNotesTable(); notesTableReady = true; }
+    const { content } = req.body;
+    if (!content?.trim()) return res.status(400).json({ error: 'Content required' });
+    const author = req.user?.name || req.user?.email || 'Unknown';
+
+    const result = await pool.query(
+      'INSERT INTO FieldOpNotes (fieldop_id, author, content) VALUES ($1, $2, $3) RETURNING *',
+      [req.params.id, author, content.trim()]
+    );
+    res.json({ note: { id: result.rows[0].id, author, content: content.trim(), createdAt: result.rows[0].created_at } });
+  } catch (error) {
+    logger.error('Error creating field op note', { error: error.message });
+    res.status(500).json({ error: 'Failed to create note' });
+  }
+});
+
+// DELETE /api/fieldops/notes/:id
+router.delete('/notes/:noteId', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM FieldOpNotes WHERE id = $1', [req.params.noteId]);
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Error deleting field op note', { error: error.message });
+    res.status(500).json({ error: 'Failed to delete note' });
+  }
+});
 
 module.exports = router;

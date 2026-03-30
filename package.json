@@ -5,9 +5,8 @@
   "type": "module",
   "main": "index.html",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "dev": "cd client && npm run dev",
+    "build": "cd client && npm run build"
   },
   "keywords": [
     "project-management",
@@ -22,7 +21,5 @@
   "author": "APEX Platform Contributors",
   "license": "MIT",
   "homepage": "https://github.com/yourusername/apex-platform#readme",
-  "devDependencies": {
-    "vite": "^7.3.1"
-  }
+  "devDependencies": {}
 }

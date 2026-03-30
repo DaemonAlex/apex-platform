@@ -8,6 +8,7 @@ import FieldOpsApp from './FieldOpsApp.vue';
 import DashboardApp from './DashboardApp.vue';
 import AdminApp from './AdminApp.vue';
 import ProfileApp from './ProfileApp.vue';
+import VendorsApp from './VendorsApp.vue';
 import { setToken } from './composables/useApi';
 
 function createVueApp(component: any, el: string | HTMLElement, options: { token: string; userName?: string; props?: Record<string, any> }) {
@@ -59,6 +60,10 @@ export function mountProfile(el: string | HTMLElement, options: { token: string;
   return createVueApp(ProfileApp, el, options);
 }
 
+export function mountVendors(el: string | HTMLElement, options: { token: string; userName?: string }) {
+  return createVueApp(VendorsApp, el, options);
+}
+
 // Expose globally for the monolith to call
 (window as any).ApexRooms = { mount: mountRooms };
 (window as any).ApexProjects = { mount: mountProjects };
@@ -67,3 +72,4 @@ export function mountProfile(el: string | HTMLElement, options: { token: string;
 (window as any).ApexDashboard = { mount: mountDashboard };
 (window as any).ApexAdmin = { mount: mountAdmin };
 (window as any).ApexProfile = { mount: mountProfile };
+(window as any).ApexVendors = { mount: mountVendors };

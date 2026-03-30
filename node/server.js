@@ -25,6 +25,7 @@ const reportsRoutes = require('./routes/reports');
 const contactsRoutes = require('./routes/contacts');
 const meetingsRoutes = require('./routes/meetings');
 const documentsRoutes = require('./routes/documents');
+const vendorRoutes = require('./routes/vendors');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -116,6 +117,7 @@ app.use('/api/reports', authenticateToken, reportsRoutes);
 app.use('/api/contacts', authenticateToken, contactsRoutes);
 app.use('/api/meetings', authenticateToken, meetingsRoutes);
 app.use('/api/documents', authenticateToken, documentsRoutes);
+app.use('/api/vendors', authenticateToken, vendorRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

@@ -78,19 +78,68 @@ function handlePageChange(page: number) {
   store.fetchAuditLog();
 }
 
+function isDiffEntry(val: any): val is { before: any; after: any } {
+  return val && typeof val === 'object' && ('before' in val || 'after' in val);
+}
+
+function formatVal(v: any): string {
+  if (v === undefined || v === null) return '(empty)';
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+}
+
+function renderDiffValue(label: string, before: any, after: any) {
+  const bStr = formatVal(before);
+  const aStr = formatVal(after);
+  return h('div', {
+    style: 'display:grid;grid-template-columns:120px 1fr 24px 1fr;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.04);',
+  }, [
+    h('span', { style: 'color:#8890a4;font-weight:500;' }, label),
+    h('span', { style: 'color:#f87171;background:rgba(248,113,113,0.08);padding:2px 6px;border-radius:3px;word-break:break-all;' }, bStr),
+    h('span', { style: 'color:#8890a4;text-align:center;' }, '\u2192'),
+    h('span', { style: 'color:#4ade80;background:rgba(74,222,128,0.08);padding:2px 6px;border-radius:3px;word-break:break-all;' }, aStr),
+  ]);
+}
+
 function renderExpand(row: AuditEntry) {
   const parsed = tryParseDetails(row.details);
   const details = parsed || (row.details ? { details: row.details } : null);
   if (!details) return h('div', { style: 'padding:8px;color:#8890a4' }, 'No additional details');
 
-  return h('div', { style: 'padding: 8px 16px; font-size: 13px;' },
-    Object.entries(details).map(([key, val]) =>
-      h('div', { style: 'margin-bottom: 4px;' }, [
-        h('span', { style: 'color: #8890a4; margin-right: 8px;' }, `${key}:`),
-        h('span', {}, String(val)),
-      ])
-    )
-  );
+  // Check if this is a diff-style entry (has before/after fields)
+  const diffEntries = Object.entries(details).filter(([, val]) => isDiffEntry(val));
+  const plainEntries = Object.entries(details).filter(([, val]) => !isDiffEntry(val));
+
+  const children: any[] = [];
+
+  if (diffEntries.length > 0) {
+    children.push(
+      h('div', { style: 'font-weight:600;margin-bottom:8px;color:#c0c6d4;' }, 'Changes'),
+      h('div', { style: 'font-size:12px;margin-bottom:4px;display:grid;grid-template-columns:120px 1fr 24px 1fr;gap:8px;color:#64748b;' }, [
+        h('span', {}, 'Field'),
+        h('span', {}, 'Before'),
+        h('span', {}),
+        h('span', {}, 'After'),
+      ]),
+      ...diffEntries.map(([key, val]) => renderDiffValue(key, (val as any).before, (val as any).after))
+    );
+  }
+
+  if (plainEntries.length > 0) {
+    if (diffEntries.length > 0) {
+      children.push(h('div', { style: 'margin-top:12px;font-weight:600;color:#c0c6d4;margin-bottom:8px;' }, 'Details'));
+    }
+    children.push(
+      ...plainEntries.map(([key, val]) =>
+        h('div', { style: 'margin-bottom: 4px;' }, [
+          h('span', { style: 'color: #8890a4; margin-right: 8px;' }, `${key}:`),
+          h('span', {}, typeof val === 'object' && val !== null ? JSON.stringify(val, null, 2) : String(val)),
+        ])
+      )
+    );
+  }
+
+  return h('div', { style: 'padding: 8px 16px; font-size: 13px;' }, children);
 }
 </script>
 

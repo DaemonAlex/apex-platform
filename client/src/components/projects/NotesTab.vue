@@ -5,9 +5,11 @@ import {
   NModal, NForm, NFormItem, useMessage,
 } from 'naive-ui';
 import { apiFetch } from '../../composables/useApi';
+import { useTheme } from '../../composables/useTheme';
 
 const props = defineProps<{ projectId: string }>();
 const msg = useMessage();
+const { colors } = useTheme();
 const notes = ref<any[]>([]);
 const visits = ref<any[]>([]);
 const newNote = ref('');
@@ -103,7 +105,7 @@ onMounted(load);
     <template v-if="visits.length > 0">
       <NDivider style="margin: 24px 0 16px;">Site Visits</NDivider>
       <div v-for="v in visits" :key="'v-' + v.id"
-        style="border: 1px solid #2a2d3e; border-radius: 8px; padding: 12px; margin-bottom: 8px;"
+        :style="`border: 1px solid ${colors.inputBorder}; border-radius: 8px; padding: 12px; margin-bottom: 8px;`"
       >
         <div style="font-weight: 500;"><i class="ph ph-map-trifold" /> {{ v.visitor }}</div>
         <div style="font-size: 0.8rem; color: #94a3b8; margin-top: 2px;">

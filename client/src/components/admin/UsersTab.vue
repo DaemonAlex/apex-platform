@@ -2,15 +2,20 @@
 import { ref, computed, h } from 'vue';
 import {
   NDataTable, NInput, NSelect, NButton, NSpace, NTag, NModal,
-  NForm, NFormItem, NSpin, NPagination, useMessage
+  NForm, NFormItem, NSpin, NPagination, useMessage, NAlert
 } from 'naive-ui';
-import type { DataTableColumns } from 'naive-ui';
+import type { DataTableColumns, DataTableRowKey } from 'naive-ui';
 import { useAdminStore } from '../../stores/admin';
 import type { User } from '../../types/admin';
 import { VALID_ROLES } from '../../types/admin';
 
 const store = useAdminStore();
 const message = useMessage();
+
+// Bulk selection
+const checkedRowKeys = ref<DataTableRowKey[]>([]);
+const bulkRoleValue = ref<string | null>(null);
+const bulkActionLoading = ref(false);
 
 // Pagination
 const pageSize = 20;
@@ -74,8 +79,58 @@ function formatDate(dateStr?: string) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+// Bulk actions
+async function bulkDelete() {
+  if (!checkedRowKeys.value.length) return;
+  bulkActionLoading.value = true;
+  let succeeded = 0;
+  let failed = 0;
+  for (const id of checkedRowKeys.value) {
+    try {
+      await store.deleteUser(Number(id));
+      succeeded++;
+    } catch {
+      failed++;
+    }
+  }
+  bulkActionLoading.value = false;
+  checkedRowKeys.value = [];
+  if (failed === 0) {
+    message.success(`Deleted ${succeeded} user(s)`);
+  } else {
+    message.warning(`Deleted ${succeeded}, failed ${failed}`);
+  }
+}
+
+async function bulkChangeRole() {
+  if (!checkedRowKeys.value.length || !bulkRoleValue.value) return;
+  bulkActionLoading.value = true;
+  let succeeded = 0;
+  let failed = 0;
+  for (const id of checkedRowKeys.value) {
+    try {
+      const user = store.users.find(u => u.id === Number(id));
+      if (user) {
+        await store.updateUser(Number(id), { name: user.name, email: user.email, role: bulkRoleValue.value! });
+        succeeded++;
+      }
+    } catch {
+      failed++;
+    }
+  }
+  bulkActionLoading.value = false;
+  checkedRowKeys.value = [];
+  bulkRoleValue.value = null;
+  if (failed === 0) {
+    message.success(`Updated role for ${succeeded} user(s)`);
+  } else {
+    message.warning(`Updated ${succeeded}, failed ${failed}`);
+  }
+}
+
 // Table columns
 const columns: DataTableColumns<User> = [
+  { type: 'selection' },
   {
     title: 'User',
     key: 'name',
@@ -235,9 +290,28 @@ function copyTempPassword() {
       <NButton type="primary" @click="showCreateModal = true">Add User</NButton>
     </NSpace>
 
+    <!-- Bulk actions bar -->
+    <NAlert v-if="checkedRowKeys.length > 0" type="info" style="margin-bottom: 12px;" :show-icon="false">
+      <NSpace align="center">
+        <span style="font-weight: 500;">{{ checkedRowKeys.length }} user(s) selected</span>
+        <NSelect
+          v-model:value="bulkRoleValue"
+          :options="roleSelectOptions"
+          placeholder="Change role to..."
+          clearable
+          size="small"
+          style="width: 180px;"
+        />
+        <NButton size="small" type="primary" secondary :disabled="!bulkRoleValue" :loading="bulkActionLoading" @click="bulkChangeRole">Apply Role</NButton>
+        <NButton size="small" type="error" ghost :loading="bulkActionLoading" @click="bulkDelete">Delete Selected</NButton>
+        <NButton size="small" quaternary @click="checkedRowKeys = []">Clear</NButton>
+      </NSpace>
+    </NAlert>
+
     <!-- Users table -->
     <NSpin :show="store.usersLoading">
       <NDataTable
+        v-model:checked-row-keys="checkedRowKeys"
         :columns="columns"
         :data="paginatedUsers"
         :row-key="(row: User) => row.id"

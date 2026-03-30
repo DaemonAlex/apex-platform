@@ -45,8 +45,8 @@ Internet -> Cloudflare Tunnel -> nginx (port 80) -> Express API (port 3001)
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | Vue 3 + TypeScript + Naive UI + Pinia (6/6 sections migrated) |
-| App Shell | Vanilla JS monolith (auth, profile, navigation, theme only) |
+| Frontend | Vue 3 + TypeScript + Naive UI + Pinia (7/7 sections migrated) |
+| App Shell | Vanilla JS monolith (auth, navigation, theme toggle only) |
 | Backend | Express.js (Node.js) with raw SQL + Drizzle ORM schema |
 | Database | PostgreSQL 16 (apex_db) |
 | Build | Vite 8 (IIFE output to `/vue/apex-rooms.iife.js`, ~2.0MB) |
@@ -89,7 +89,7 @@ Internet -> Cloudflare Tunnel -> nginx (port 80) -> Express API (port 3001)
 
 The 20,000+ line vanilla JS monolith in `index.html` has reached its maintainability limit. Previous attempts at modularization (Vite ES Modules, "Strangler Fig" pattern in January 2026) helped with organization but did not solve the fundamental problem: everything is in one HTML file with no component model, no type safety, and no proper state management.
 
-### Migration Status: COMPLETE (all 6 sections)
+### Migration Status: COMPLETE (all 7 sections)
 
 | Section | App Component | Pinia Store | Mount Function |
 |---------|--------------|-------------|----------------|
@@ -99,10 +99,27 @@ The 20,000+ line vanilla JS monolith in `index.html` has reached its maintainabi
 | Field Ops | FieldOpsApp.vue | (direct API) | `mountFieldOps` |
 | Reports | ReportsApp.vue | (direct API) | `mountReports` |
 | Admin | AdminApp.vue | admin.ts | `mountAdmin` |
+| Profile | ProfileApp.vue | (direct API) | `mountProfile` |
 
-The monolith (`index.html`) now only handles: authentication/login, profile management, app shell (navigation, sidebar, theme switching). All section content is rendered by Vue apps mounted via `mountVueSection()`.
+The monolith (`index.html`) now only handles: authentication/login, app shell (navigation, theme toggle). All section content is rendered by Vue apps mounted via `mountVueSection()`.
 
-**Mount pattern:** Each Vue app is exposed globally (e.g., `window.ApexAdmin = { mount: mountAdmin }`) and the monolith calls `mountVueSection(containerId, globalName)` when navigating to a section.
+### Theme System
+
+All 7 Vue apps share a single `useTheme()` composable (`client/src/composables/useTheme.ts`) that provides:
+- Reactive `isDark` ref via `window.addEventListener('apex-theme-change')` + MutationObserver backup
+- Full dark and light Naive UI overrides (DataTable, Card, Input, Tabs, etc.)
+- Semantic `colors` object for inline styles (textMuted, railColor, tooltipBg, etc.)
+- Theme switches instantly when toolbar toggle is clicked - no page reload needed
+
+The monolith's `toggleDarkMode()` dispatches `CustomEvent('apex-theme-change')` which the Vue composable listens for. The toolbar toggle persists to `localStorage('apex_theme')` and syncs with backend user preferences.
+
+**Light mode known gaps:** DashboardApp chart colors are theme-reactive. Other Vue apps (FieldOps, Reports, RoomApp, ProjectApp) may still have hardcoded dark colors in inline styles that need auditing.
+
+### Mount Pattern
+
+Each Vue app is exposed globally (e.g., `window.ApexRooms = { mount: mountRooms }`) and the monolith calls `mountVueSection(containerId, globalName)` when navigating to a section.
+
+**IMPORTANT - Vite library name:** The Vite config uses `name: 'ApexBundle'` (not `ApexRooms`). This prevents Vite's IIFE return value from overwriting the individual `window.ApexRooms`, `window.ApexProjects`, etc. assignments in `mount.ts`. If you change the library name to match any of the window globals, that global gets overwritten with ALL exports and `findMountFn` will pick the wrong mount function alphabetically.
 
 ### New Frontend Stack
 
@@ -228,7 +245,14 @@ There is also a 5th endpoint for report data export.
 
 | Date | What |
 |------|------|
-| 2026-03-29 | **VUE 3 MIGRATION COMPLETE.** All 6 sections (Dashboard, Projects, Room Status, Field Ops, Reports, Admin) now run on Vue 3. Admin section migrated with 11 new files, fixing broken permission editor, adding delete confirmations, masking DB credentials, eliminating duplicate navigation, splitting settings into sub-tabs, adding CSV audit export. Bundle v=20, ~2.0MB. |
+| 2026-03-29 | **Theme system overhaul.** Shared `useTheme()` composable replaces duplicated theme objects in all 7 App.vue files. MutationObserver makes dark/light switch reactive. Light mode: white nav bar, proper card/table/input styling. Dashboard chart colors now theme-reactive. |
+| 2026-03-29 | **Profile migrated to Vue.** ProfileApp.vue with personal info, password change (12+ char validation), preferences. New `GET /api/users/me` endpoint. Dark mode toggle syncs localStorage + backend prefs. |
+| 2026-03-29 | **DB config endpoints implemented.** GET/PUT `/api/admin/db/config`, POST `/api/admin/db/test`, POST `/api/admin/db/create-mariadb-user`. mysql2 driver installed. Password masking on GET. |
+| 2026-03-29 | **Audit log date range filter.** Backend `audit.js` now accepts `fromDate`/`toDate` query params. Frontend syncs NDatePicker to store filters. |
+| 2026-03-29 | **Roles persisted to PostgreSQL.** New `Roles` table with 7 seeded defaults, user count JOIN, system role protection, lazy init for reboot safety. |
+| 2026-03-29 | **Dark mode toolbar toggle.** Sun/moon icon in nav bar, localStorage persistence, backend preference sync, no-flash page load via IIFE. |
+| 2026-03-29 | **Service account.** `service@apex.local` (admin role) for check-reports.js. Script now uses logged-in user's ID instead of hardcoded `id=1`. |
+| 2026-03-29 | **VUE 3 MIGRATION COMPLETE.** All 7 sections (Dashboard, Projects, Room Status, Field Ops, Reports, Admin, Profile) on Vue 3. Bundle v=29, ~2.0MB. |
 | 2026-03-28 | **ARCHITECTURAL DECISION: Vue 3 migration.** Frontend moving from vanilla JS monolith to Vue 3 + TypeScript + Naive UI + Pinia + Vue Router. Backend adding Drizzle ORM. Section-by-section, starting with Room Status. |
 | 2026-03-28 | Room Status system redesigned: Locations > Floors > Rooms hierarchy, equipment inventory, room standards with compliance, configurable check frequency (daily/weekly/biweekly/monthly), full audit trail with SNOW tickets |
 | 2026-03-28 | Phase 1B complete: task creation streamlined to 3-field quick-add (name, phase, priority) with expandable details, dynamic phases per project type |
@@ -248,24 +272,28 @@ There is also a 5th endpoint for report data export.
 
 ## Planned Work
 
-### Post-Migration Cleanup
+### Cleanup
 
 - Remove dead admin JS functions from index.html (lines ~17762-19020, unreachable code)
-- Consider extracting shared `themeOverrides` into a composable (currently duplicated in each App.vue)
-- Migrate Profile section to Vue (last remaining monolith UI besides auth)
+- Remove dead profile JS functions (loadUserProfile, updateProfile, changePassword, updatePreferences - lines ~18331-18474)
+- Remove old `tryMountVueRooms()` and `loadRoomStatus()` functions (superseded by `mountVueSection`)
+
+### Light Mode Polish
+
+- Light mode nav/content is working but needs verification across all sections (Projects tables, Room Status, Field Ops, Reports)
+- Other Vue apps (FieldOps, Reports, RoomApp, ProjectApp) may have hardcoded dark colors in inline styles like DashboardApp did - audit and fix with `colors` from useTheme
+- Login page needs light mode styling (currently minimal)
 
 ### Backend Improvements
 
-- Implement DB config endpoints (`admin/db/config`, `admin/db/test`, `admin/db/create-mariadb-user`) - currently called from frontend but don't exist
-- Persist roles to database instead of in-memory array in `roles.js`
 - Add Drizzle ORM alongside existing raw queries for new features
 
 ### Feature Expansion
 
 - Three report levels: Portfolio (executive), Project deep dive, Individual contributor
+- Bulk user actions in Admin (checkbox select, bulk role change)
+- Audit log detail view (expand rows to see full change context with before/after diffs)
 - View transitions between sections
-- Bulk user actions in Admin
-- Audit log detail view (expand rows to see full change context)
 
 ---
 
@@ -383,10 +411,19 @@ Check Cloudflare tunnel, then nginx, then backend - in that order:
 
 **Last session:** 2026-03-29
 
-**What was completed:**
-- Vue 3 migration is DONE - all 6 sections migrated
-- Admin section migrated with full UX improvements (11 new Vue files)
-- Bundle rebuilt (v=20), backend restarted, 10/10 reports passing
+**What was completed (2026-03-29):**
+- Vue 3 migration DONE - all 7 sections (Dashboard, Projects, Room Status, Field Ops, Reports, Admin, Profile)
+- Roles persisted to PostgreSQL (was in-memory), lazy init for reboot safety
+- DB config endpoints implemented (4 new routes in admin.js, mysql2 driver)
+- Audit log date range filtering (backend + frontend)
+- Dark mode toolbar toggle with localStorage persistence + CustomEvent for Vue sync
+- Shared useTheme composable with full light/dark Naive UI overrides + semantic colors
+- Light mode: white nav bar, proper card/table/input styling, Dashboard chart colors reactive
+- Service account (`service@apex.local`) for automated testing
+- Fixed Room Status routing bug (Vite IIFE library name collision - `ApexRooms` -> `ApexBundle`)
+- README rewritten for v8.0
+- Pushed to GitHub: 3 commits (`be0dac9`, `5b993dd`, `f9c047f`)
+- 10/10 reports passing, all services auto-start on reboot
 
 **Quick resume commands:**
 ```bash
@@ -396,19 +433,29 @@ cd F:\Server\webapps\sites\apex-platform\node && node check-reports.js
 # Rebuild Vue after changes
 cd F:\Server\webapps\sites\apex-platform\client && npm run build
 
-# Bump cache (increment v=N in index.html line 20)
-# <script src="/vue/apex-rooms.iife.js?v=20" defer></script>
+# Bump cache (increment v=N in index.html line ~20)
+# <script src="/vue/apex-rooms.iife.js?v=34" defer></script>
 
 # Restart backend
 nssm restart APEX-Backend
 ```
 
+**Accounts:**
+- `damonalexander@me.com` (owner) - real user account
+- `service@apex.local` / `***REDACTED-PASSWORD***` (admin) - service account for check-reports.js
+
 **Next steps (pick any):**
-1. Clean up dead admin JS from monolith (~250 lines of unreachable code)
-2. Implement missing DB config backend endpoints
-3. Persist roles to database instead of in-memory
-4. Migrate Profile section to Vue (last monolith UI)
-5. Feature work: bulk user actions, audit detail views, report drill-down
+1. Light mode polish - audit FieldOps, Reports, RoomApp, ProjectApp for hardcoded dark inline styles
+2. Clean up dead JS functions in monolith (~500 lines of unreachable admin/profile/room code)
+3. Bulk user actions in Admin (checkbox select, bulk role change)
+4. Audit log detail view with before/after diffs
+5. Report drill-down (Portfolio -> Project -> Task)
+6. Remove old `src/` legacy Vite bridge modules (superseded by Vue client)
+
+**Known issues:**
+- Light mode: FieldOps, Reports, RoomApp, ProjectApp may have hardcoded dark colors in inline styles (Dashboard was fixed, others not yet audited)
+- Old admin/profile/room JS functions are dead code in index.html (harmless but messy)
+- Browser form field warnings from Naive UI NInput components (cosmetic, no id/name attributes)
 
 **No blockers.**
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import { NMessageProvider, NConfigProvider } from 'naive-ui';
 import ProjectList from './views/ProjectList.vue';
 import ProjectDetail from './views/ProjectDetail.vue';
@@ -20,6 +20,14 @@ function backToList() {
   currentView.value = 'list';
   selectedProjectId.value = null;
 }
+
+// Listen for cross-app navigation from Dashboard
+function handleOpenProject(e: Event) {
+  const id = (e as CustomEvent).detail?.id;
+  if (id) openProject(id);
+}
+onMounted(() => window.addEventListener('apex-open-project', handleOpenProject));
+onUnmounted(() => window.removeEventListener('apex-open-project', handleOpenProject));
 </script>
 
 <template>

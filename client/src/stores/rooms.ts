@@ -88,6 +88,17 @@ export const useRoomStore = defineStore('rooms', () => {
     await fetchLocations();
   }
 
+  async function updateRoom(roomId: string, data: Record<string, any>) {
+    await apiFetch(`/room-status/${roomId}`, { method: 'PUT', body: JSON.stringify(data) });
+    await fetchRooms();
+  }
+
+  async function deleteRoom(roomId: string) {
+    await apiFetch(`/room-status/${roomId}`, { method: 'DELETE' });
+    await fetchRooms();
+    await fetchLocations();
+  }
+
   async function submitCheck(roomId: string, checkData: Record<string, any>) {
     await apiFetch('/room-status', {
       method: 'POST',
@@ -113,6 +124,23 @@ export const useRoomStore = defineStore('rooms', () => {
     });
   }
 
+  async function fetchTechDetails(roomId: string) {
+    return apiFetch<any>(`/room-status/${roomId}/tech`);
+  }
+
+  async function saveTechDetails(roomId: string, data: Record<string, any>) {
+    return apiFetch<any>(`/room-status/${roomId}/tech`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+
+  async function fetchDocuments(entityType: string, entityId: string) {
+    const data = await apiFetch<{ documents: any[] }>(`/room-status/documents/${entityType}/${entityId}`);
+    return data.documents;
+  }
+
+  async function deleteDocument(docId: number) {
+    await apiFetch(`/room-status/documents/${docId}`, { method: 'DELETE' });
+  }
+
   return {
     // State
     locations, rooms, standards, loading,
@@ -122,6 +150,7 @@ export const useRoomStore = defineStore('rooms', () => {
     // Actions
     fetchRooms, fetchLocations, fetchStandards, fetchFloors,
     createLocation, deleteLocation, createFloor, deleteFloor,
-    createRoom, submitCheck, fetchCheckHistory, fetchEquipment, addEquipment,
+    createRoom, updateRoom, deleteRoom, submitCheck, fetchCheckHistory, fetchEquipment, addEquipment,
+    fetchTechDetails, saveTechDetails, fetchDocuments, deleteDocument,
   };
 });
