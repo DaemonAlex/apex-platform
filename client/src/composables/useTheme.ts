@@ -1,34 +1,22 @@
-import { ref, computed, onUnmounted } from 'vue';
+import { ref, computed } from 'vue';
 import { darkTheme } from 'naive-ui';
 import type { GlobalThemeOverrides } from 'naive-ui';
 
-// Shared reactive ref - one MutationObserver for all components
+// Shared reactive ref updated by both MutationObserver and custom event
 const isDarkRef = ref(document.documentElement.getAttribute('data-theme') === 'dark');
-let observerCount = 0;
-let observer: MutationObserver | null = null;
 
-function startObserver() {
-  if (observer) { observerCount++; return; }
-  observer = new MutationObserver(() => {
-    isDarkRef.value = document.documentElement.getAttribute('data-theme') === 'dark';
-  });
-  observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-  observerCount = 1;
+function syncTheme() {
+  isDarkRef.value = document.documentElement.getAttribute('data-theme') === 'dark';
 }
 
-function stopObserver() {
-  observerCount--;
-  if (observerCount <= 0 && observer) {
-    observer.disconnect();
-    observer = null;
-    observerCount = 0;
-  }
-}
+// Listen for monolith's custom event (most reliable)
+window.addEventListener('apex-theme-change', () => syncTheme());
+
+// MutationObserver as backup
+const observer = new MutationObserver(() => syncTheme());
+observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
 export function useTheme() {
-  startObserver();
-  onUnmounted(stopObserver);
-
   const isDark = computed(() => isDarkRef.value);
 
   const darkOverrides: GlobalThemeOverrides = {

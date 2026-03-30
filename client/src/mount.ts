@@ -11,6 +11,8 @@ import ProfileApp from './ProfileApp.vue';
 import { setToken } from './composables/useApi';
 
 function createVueApp(component: any, el: string | HTMLElement, options: { token: string; userName?: string; props?: Record<string, any> }) {
+  const name = component.__name || component.name || 'unknown';
+  console.log('[createVueApp] Component:', name, 'Target:', typeof el === 'string' ? el : (el as HTMLElement)?.id);
   setToken(options.token);
 
   const app = createApp(component, { userName: options.userName || '', ...(options.props || {}) });
@@ -21,6 +23,9 @@ function createVueApp(component: any, el: string | HTMLElement, options: { token
   if (target) {
     target.innerHTML = '';
     app.mount(target);
+    console.log('[createVueApp] Mounted', name, 'into', (target as HTMLElement).id);
+  } else {
+    console.error('[createVueApp] Target not found for', name);
   }
 
   return { unmount: () => app.unmount() };

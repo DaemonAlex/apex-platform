@@ -9,7 +9,7 @@ export default defineConfig({
   build: {
     lib: {
       entry: 'src/mount.ts',
-      name: 'ApexRooms',
+      name: 'ApexBundle',
       fileName: 'apex-rooms',
       formats: ['iife'],
     },

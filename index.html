@@ -17,7 +17,7 @@
     <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css" />
 
     <!-- Vue Room Status Module (built from client/) -->
-    <script src="/vue/apex-rooms.iife.js?v=29" defer></script>
+    <script src="/vue/apex-rooms.iife.js?v=34" defer></script>
 
     <!-- External Libraries from CDN -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -5184,6 +5184,10 @@
 
             <!-- Room Status View - Vue-powered -->
             <div id="roomstatusView" class="content-view">
+                <div class="content-header">
+                    <h1 class="content-title">Room Status</h1>
+                    <p class="content-subtitle">Manage rooms, locations, and equipment compliance</p>
+                </div>
                 <div id="roomStatusGrid" style="min-height: 400px;">
                     <div style="text-align:center; padding:3rem; color:var(--gray-400);">
                         <i class="ph ph-spinner" style="font-size:2rem; animation:spin 1s linear infinite;"></i>
@@ -5240,6 +5244,8 @@
                 localStorage.setItem('apex_theme', 'dark');
             }
             updateThemeIcon();
+            // Notify Vue apps of theme change
+            window.dispatchEvent(new CustomEvent('apex-theme-change', { detail: { dark: !isDark } }));
 
             // Sync with backend user preferences if logged in
             if (typeof AppState !== 'undefined' && AppState.user && AppState.backendAuth) {
@@ -5711,7 +5717,11 @@
             // Handle insights using reportsView
             const actualViewName = viewName === 'insights' ? 'reports' : viewName;
             const viewEl = document.getElementById(`${actualViewName}View`);
+            console.log('[showView]', viewName, '-> element:', viewEl?.id, 'found:', !!viewEl);
             if (viewEl) viewEl.classList.add('active');
+            // Debug: verify only one view is active
+            const activeViews = document.querySelectorAll('.content-view.active');
+            if (activeViews.length > 1) console.warn('[showView] Multiple active views!', Array.from(activeViews).map(v => v.id));
 
             // Breadcrumb removed - no longer needed
 
