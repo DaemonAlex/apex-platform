@@ -3,7 +3,7 @@ import { h, onMounted, ref } from 'vue';
 import {
   NDataTable, NInput, NSelect, NSpace, NTag, NProgress,
   NPagination, NSpin, NTabs, NTabPane, NCard, NGrid, NGi, NStatistic,
-  NButtonGroup, NButton, NModal, NForm, NFormItem, NInputNumber,
+  NButtonGroup, NButton, NModal, NForm, NFormItem,
   useMessage,
 } from 'naive-ui';
 import { useProjectStore } from '../stores/projects';
@@ -180,17 +180,6 @@ const columns: DataTableColumns<ProjectSummary> = [
       };
       return h(NTag, { type: (types[row.status] || 'default') as any, size: 'small', bordered: false },
         () => labels[row.status] || row.status);
-    },
-  },
-  {
-    title: 'Budget',
-    key: 'budget',
-    width: 90,
-    align: 'right',
-    sorter: true,
-    render: (row) => {
-      const val = parseFloat(row.estimatedBudget || row.budget || '0');
-      return val > 0 ? '$' + (val / 1000).toFixed(0) + 'K' : '-';
     },
   },
   {
@@ -439,9 +428,6 @@ onMounted(() => {
 
               <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: #94a3b8;">
                 <span>{{ (row.progress || 0) }}% complete</span>
-                <span v-if="parseFloat(row.estimatedBudget || row.budget || '0') > 0">
-                  ${{ (parseFloat(row.estimatedBudget || row.budget || '0') / 1000).toFixed(0) }}K
-                </span>
                 <span v-if="getDueInfo(row).text"
                   :style="{ color: getDueInfo(row).urgency === 'overdue' ? '#ef4444' : getDueInfo(row).urgency === 'soon' ? '#f59e0b' : '#94a3b8', fontWeight: getDueInfo(row).urgency ? '500' : 'normal' }">
                   {{ getDueInfo(row).text }}
@@ -533,17 +519,12 @@ onMounted(() => {
             <NInput v-model:value="createForm.siteLocation" placeholder="e.g., 123 Main St, Floor 3" />
           </NFormItem>
         </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
           <NFormItem label="Start Date">
             <input v-model="createForm.startDate" type="date" :style="`width:100%;padding:6px 10px;border:1px solid ${colors.inputBorder};border-radius:3px;background:${colors.inputBg};color:${colors.inputText};`" />
           </NFormItem>
           <NFormItem label="End Date">
             <input v-model="createForm.endDate" type="date" :style="`width:100%;padding:6px 10px;border:1px solid ${colors.inputBorder};border-radius:3px;background:${colors.inputBg};color:${colors.inputText};`" />
-          </NFormItem>
-          <NFormItem label="Est. Budget">
-            <NInputNumber v-model:value="createForm.estimatedBudget" :min="0" :step="1000" placeholder="$0" style="width: 100%;">
-              <template #prefix>$</template>
-            </NInputNumber>
           </NFormItem>
         </div>
         <NFormItem label="Description">

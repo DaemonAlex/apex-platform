@@ -420,4 +420,245 @@ router.get('/timeline', async (req, res) => {
   }
 });
 
+// GET /reports/custom - Flexible report builder endpoint
+router.get('/custom', async (req, res) => {
+  try {
+    const { source, groupBy, metric, status, type, businessLine, from, to, assignee, client, priority } = req.query;
+    const dataSource = source || 'projects';
+
+    if (dataSource === 'projects') {
+      let where = 'WHERE parent_project_id IS NULL';
+      const params = [];
+      let i = 0;
+      if (status) { where += ` AND status = $${++i}`; params.push(status); }
+      if (type) { where += ` AND type = $${++i}`; params.push(type); }
+      if (businessLine) { where += ` AND businessline = $${++i}`; params.push(businessLine); }
+      if (client) { where += ` AND client ILIKE $${++i}`; params.push('%' + client + '%'); }
+      if (priority) { where += ` AND priority = $${++i}`; params.push(priority); }
+      if (from) { where += ` AND created_at >= $${++i}`; params.push(from); }
+      if (to) { where += ` AND created_at <= $${++i}`; params.push(to); }
+
+      const groupCol = {
+        status: 'status', type: 'type', businessLine: 'businessline',
+        client: 'client', priority: 'priority', costCenter: 'costcenter',
+        siteLocation: 'sitelocation',
+        month: "TO_CHAR(created_at, 'YYYY-MM')",
+        quarter: "TO_CHAR(created_at, 'YYYY-\"Q\"Q')",
+        year: "TO_CHAR(created_at, 'YYYY')",
+      }[groupBy] || 'status';
+
+      const metricSql = {
+        budget: 'COALESCE(SUM(estimatedbudget), 0) as metric_value, COUNT(*) as count',
+        actual: 'COALESCE(SUM(actualbudget), 0) as metric_value, COUNT(*) as count',
+        variance: 'COALESCE(SUM(actualbudget - estimatedbudget), 0) as metric_value, COUNT(*) as count',
+        avgProgress: 'ROUND(AVG(COALESCE(progress, 0))) as metric_value, COUNT(*) as count',
+        taskCount: 'SUM(jsonb_array_length(COALESCE(tasks, \'[]\'::jsonb))) as metric_value, COUNT(*) as count',
+      }[metric] || 'COUNT(*) as metric_value, COUNT(*) as count';
+
+      const result = await pool.query(`
+        SELECT ${groupCol} as group_key, ${metricSql}
+        FROM projects ${where}
+        GROUP BY group_key ORDER BY metric_value DESC
+      `, params);
+
+      const rows = await pool.query(`
+        SELECT id, name, status, type, businessline, client, priority, costcenter, sitelocation,
+               estimatedbudget, actualbudget, progress, startdate, enddate, duedate, requestdate,
+               purchaseorder, jsonb_array_length(COALESCE(tasks, '[]'::jsonb)) as task_count,
+               created_at, updated_at
+        FROM projects ${where}
+        ORDER BY created_at DESC LIMIT 200
+      `, params);
+
+      res.json({
+        source: 'projects', groupBy: groupBy || 'status', metric: metric || 'count',
+        groups: result.rows.map(r => ({
+          key: r.group_key || 'Unknown', value: parseFloat(r.metric_value), count: parseInt(r.count),
+        })),
+        rows: rows.rows.map(r => ({
+          id: r.id, name: r.name, status: r.status, type: r.type,
+          businessLine: r.businessline, client: r.client, priority: r.priority,
+          costCenter: r.costcenter, siteLocation: r.sitelocation,
+          budget: parseFloat(r.estimatedbudget || 0), actual: parseFloat(r.actualbudget || 0),
+          variance: parseFloat(r.actualbudget || 0) - parseFloat(r.estimatedbudget || 0),
+          progress: r.progress || 0, taskCount: parseInt(r.task_count || 0),
+          startDate: r.startdate, endDate: r.enddate, dueDate: r.duedate,
+          requestDate: r.requestdate, purchaseOrder: r.purchaseorder,
+          createdAt: r.created_at, updatedAt: r.updated_at,
+        })),
+        total: rows.rows.length,
+      });
+
+    } else if (dataSource === 'fieldops') {
+      let where = 'WHERE 1=1';
+      const params = [];
+      let i = 0;
+      if (status) { where += ` AND status = $${++i}`; params.push(status); }
+      if (type) { where += ` AND type = $${++i}`; params.push(type); }
+      if (assignee) { where += ` AND assignee ILIKE $${++i}`; params.push('%' + assignee + '%'); }
+      if (from) { where += ` AND scheduled_date >= $${++i}`; params.push(from); }
+      if (to) { where += ` AND scheduled_date <= $${++i}`; params.push(to); }
+
+      const groupCol = {
+        status: 'status', type: 'type', assignee: 'assignee',
+        month: "TO_CHAR(scheduled_date, 'YYYY-MM')",
+        location: 'location', project: 'project_name',
+        completedBy: 'completed_by',
+      }[groupBy] || 'status';
+
+      const metricSql = metric === 'duration'
+        ? 'COALESCE(SUM(estimated_duration), 0) as metric_value, COUNT(*) as count'
+        : 'COUNT(*) as metric_value, COUNT(*) as count';
+
+      const result = await pool.query(`
+        SELECT ${groupCol} as group_key, ${metricSql}
+        FROM fieldops ${where} GROUP BY group_key ORDER BY metric_value DESC
+      `, params);
+
+      const rows = await pool.query(`
+        SELECT f.id, f.task_name, f.project_name, f.project_id, f.type, f.status,
+               f.assignee, f.location, f.scheduled_date, f.start_time, f.end_time,
+               f.estimated_duration, f.completed_at, f.completed_by, f.created_at,
+               (SELECT COUNT(*) FROM FieldOpNotes n WHERE n.fieldop_id = f.id) as note_count
+        FROM fieldops f ${where} ORDER BY scheduled_date DESC LIMIT 200
+      `, params);
+
+      res.json({
+        source: 'fieldops', groupBy: groupBy || 'status', metric: metric || 'count',
+        groups: result.rows.map(r => ({
+          key: r.group_key || 'Unknown', value: parseInt(r.metric_value), count: parseInt(r.count),
+        })),
+        rows: rows.rows.map(r => ({
+          id: r.id, name: r.task_name, projectName: r.project_name, projectId: r.project_id,
+          type: r.type, status: r.status, assignee: r.assignee, location: r.location,
+          date: r.scheduled_date, startTime: r.start_time, endTime: r.end_time,
+          duration: r.estimated_duration, completedAt: r.completed_at,
+          completedBy: r.completed_by, noteCount: parseInt(r.note_count || 0),
+          createdAt: r.created_at,
+        })),
+        total: rows.rows.length,
+      });
+
+    } else if (dataSource === 'rooms') {
+      const result = await pool.query(`
+        SELECT r.room_id, r.name, r.room_type, r.location, r.capacity,
+               r.check_frequency, l.name as loc_name, f.name as floor_name,
+               s.name as standard_name,
+               lc.rag_status, lc.checked_at as last_checked,
+               (SELECT COUNT(*) FROM RoomEquipment e WHERE e.room_id = r.room_id AND e.status = 'active') as equip_count,
+               (SELECT COUNT(*) FROM RoomCheckHistory h WHERE h.room_id = r.room_id) as check_count
+        FROM Rooms r
+        LEFT JOIN Locations l ON r.location_id = l.id
+        LEFT JOIN Floors f ON r.floor_id = f.id
+        LEFT JOIN RoomStandards s ON r.standard_id = s.id
+        LEFT JOIN LATERAL (
+          SELECT rag_status, checked_at FROM RoomCheckHistory
+          WHERE room_id = r.room_id ORDER BY checked_at DESC LIMIT 1
+        ) lc ON true
+        WHERE r.deleted_at IS NULL
+        ORDER BY l.name, f.name, r.name
+      `);
+
+      const gcol = { location: 'loc_name', type: 'room_type', status: 'rag_status',
+        standard: 'standard_name', floor: 'floor_name', frequency: 'check_frequency' }[groupBy] || 'loc_name';
+      const groups = {};
+      result.rows.forEach(r => {
+        const key = r[gcol] || 'Unknown';
+        if (!groups[key]) groups[key] = { count: 0 };
+        groups[key].count++;
+      });
+
+      res.json({
+        source: 'rooms', groupBy: groupBy || 'location', metric: 'count',
+        groups: Object.entries(groups).map(([key, val]) => ({ key, value: val.count, count: val.count })).sort((a, b) => b.value - a.value),
+        rows: result.rows.map(r => ({
+          id: r.room_id, name: r.name, type: r.room_type,
+          location: r.loc_name, floor: r.floor_name,
+          capacity: r.capacity, standard: r.standard_name,
+          frequency: r.check_frequency, equipCount: parseInt(r.equip_count),
+          checkCount: parseInt(r.check_count),
+          ragStatus: r.rag_status, lastChecked: r.last_checked,
+        })),
+        total: result.rows.length,
+      });
+
+    } else if (dataSource === 'equipment') {
+      const result = await pool.query(`
+        SELECT e.*, r.name as room_name, r.location, l.name as loc_name
+        FROM RoomEquipment e
+        JOIN Rooms r ON r.room_id = e.room_id AND r.deleted_at IS NULL
+        LEFT JOIN Locations l ON r.location_id = l.id
+        WHERE e.status = 'active'
+        ORDER BY e.category, e.make, e.model
+      `);
+
+      const gcol = { category: 'category', make: 'make', location: 'loc_name', room: 'room_name' }[groupBy] || 'category';
+      const groups = {};
+      result.rows.forEach(r => {
+        const key = r[gcol] || 'Unknown';
+        if (!groups[key]) groups[key] = { count: 0 };
+        groups[key].count++;
+      });
+
+      const warrantyExpiring = result.rows.filter(r => {
+        if (!r.warranty_end) return false;
+        const diff = new Date(r.warranty_end).getTime() - Date.now();
+        return diff > 0 && diff < 90 * 86400000;
+      }).length;
+
+      const warrantyExpired = result.rows.filter(r => r.warranty_end && new Date(r.warranty_end) < new Date()).length;
+
+      res.json({
+        source: 'equipment', groupBy: groupBy || 'category', metric: 'count',
+        groups: Object.entries(groups).map(([key, val]) => ({ key, value: val.count, count: val.count })).sort((a, b) => b.value - a.value),
+        rows: result.rows.map(r => ({
+          id: r.id, category: r.category, make: r.make, model: r.model,
+          serialNumber: r.serial_number, firmware: r.firmware_version,
+          roomName: r.room_name, location: r.loc_name,
+          installDate: r.install_date, warrantyEnd: r.warranty_end,
+          warrantyStatus: !r.warranty_end ? 'unknown' : new Date(r.warranty_end) < new Date() ? 'expired' : 'active',
+        })),
+        total: result.rows.length,
+        summary: { warrantyExpiring, warrantyExpired },
+      });
+
+    } else if (dataSource === 'vendors') {
+      const result = await pool.query(`
+        SELECT v.id, v.name, v.type, v.category, v.contacts,
+          (SELECT COUNT(*) FROM VendorAssignments va WHERE va.vendor_id = v.id AND va.entity_type = 'project') as project_count,
+          (SELECT COUNT(*) FROM VendorAssignments va WHERE va.vendor_id = v.id AND va.entity_type = 'room') as room_count,
+          (SELECT COALESCE(SUM(p.estimatedbudget), 0) FROM VendorAssignments va
+           JOIN projects p ON p.id = va.entity_id WHERE va.vendor_id = v.id AND va.entity_type = 'project') as total_budget
+        FROM Vendors v WHERE v.deleted_at IS NULL ORDER BY v.name
+      `);
+
+      const gcol = { type: 'type', category: 'category' }[groupBy] || 'type';
+      const groups = {};
+      result.rows.forEach(r => {
+        const key = r[gcol] || 'Unknown';
+        if (!groups[key]) groups[key] = { count: 0 };
+        groups[key].count++;
+      });
+
+      res.json({
+        source: 'vendors', groupBy: groupBy || 'type', metric: 'count',
+        groups: Object.entries(groups).map(([key, val]) => ({ key, value: val.count, count: val.count })).sort((a, b) => b.value - a.value),
+        rows: result.rows.map(r => ({
+          id: r.id, name: r.name, type: r.type, category: r.category,
+          contactCount: (r.contacts || []).length,
+          projectCount: parseInt(r.project_count), roomCount: parseInt(r.room_count),
+          totalBudget: parseFloat(r.total_budget || 0),
+        })),
+        total: result.rows.length,
+      });
+
+    } else {
+      res.status(400).json({ error: 'Invalid source. Use: projects, fieldops, rooms, equipment, vendors' });
+    }
+  } catch (error) {
+    console.error('Custom report error:', error);
+    res.status(500).json({ error: 'Failed to generate custom report', details: error.message });
+  }
+});
+
 module.exports = router;
