@@ -66,6 +66,104 @@ async function deleteMeeting(id: number) {
 const typeLabels: Record<string, string> = { oac: 'OAC', status: 'Status', kickoff: 'Kickoff', closeout: 'Closeout', other: 'Meeting' };
 function openActionCount(m: any) { return (m.actionItems || []).filter((a: any) => a.status === 'open').length; }
 
+// ICS import
+const importing = ref(false);
+
+function parseIcsDate(val: string): Date | null {
+  if (!val) return null;
+  // Format: 20260415T140000Z or 20260415T140000
+  const m = val.replace(/[^0-9T]/g, '').match(/^(\d{4})(\d{2})(\d{2})T?(\d{2})?(\d{2})?/);
+  if (!m) return null;
+  return new Date(parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3]), parseInt(m[4] || '0'), parseInt(m[5] || '0'));
+}
+
+function parseIcsFile(text: string): any[] {
+  const events: any[] = [];
+  const blocks = text.split('BEGIN:VEVENT');
+  for (let i = 1; i < blocks.length; i++) {
+    const block = blocks[i].split('END:VEVENT')[0];
+    const get = (key: string): string => {
+      const re = new RegExp('^' + key + '[;:](.*)$', 'mi');
+      const m = block.match(re);
+      if (!m) return '';
+      // Handle folded lines (continuation lines start with space/tab)
+      let val = m[1];
+      const lines = block.split(/\r?\n/);
+      const idx = lines.findIndex(l => l.match(re));
+      if (idx >= 0) {
+        for (let j = idx + 1; j < lines.length; j++) {
+          if (lines[j].startsWith(' ') || lines[j].startsWith('\t')) val += lines[j].slice(1);
+          else break;
+        }
+      }
+      return val.replace(/\\n/g, '\n').replace(/\\,/g, ',').replace(/\\\\/g, '\\').trim();
+    };
+
+    const dtStart = parseIcsDate(get('DTSTART'));
+    const summary = get('SUMMARY');
+    if (!summary || !dtStart) continue;
+
+    const attendees: string[] = [];
+    const attendeeRegex = /ATTENDEE[^:]*:mailto:([^\r\n]+)/gi;
+    let am;
+    while ((am = attendeeRegex.exec(block)) !== null) {
+      attendees.push(am[1].trim());
+    }
+    // Also grab CN= display names
+    const cnRegex = /ATTENDEE[^:]*CN=([^;:]+)/gi;
+    while ((am = cnRegex.exec(block)) !== null) {
+      const name = am[1].replace(/"/g, '').trim();
+      if (name && !attendees.includes(name)) attendees.push(name);
+    }
+
+    events.push({
+      title: summary,
+      meetingDate: dtStart.toISOString(),
+      location: get('LOCATION'),
+      description: get('DESCRIPTION'),
+      attendees,
+    });
+  }
+  return events;
+}
+
+async function handleIcsImport(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  importing.value = true;
+  try {
+    const text = await file.text();
+    const events = parseIcsFile(text);
+    if (events.length === 0) { msg.error('No events found in ICS file'); return; }
+
+    let imported = 0;
+    for (const evt of events) {
+      try {
+        await apiFetch('/meetings', {
+          method: 'POST',
+          body: JSON.stringify({
+            projectId: props.projectId,
+            title: evt.title,
+            meetingType: 'other',
+            meetingDate: evt.meetingDate,
+            attendees: evt.attendees,
+            agenda: evt.description ? evt.description.split('\n').filter((s: string) => s.trim()) : [],
+            notes: evt.location ? 'Location: ' + evt.location : null,
+          }),
+        });
+        imported++;
+      } catch { /* skip individual failures */ }
+    }
+    msg.success(`Imported ${imported} of ${events.length} meeting(s)`);
+    load();
+  } catch (err: any) {
+    msg.error('Failed to parse ICS file');
+  } finally {
+    importing.value = false;
+    (e.target as HTMLInputElement).value = '';
+  }
+}
+
 onMounted(load);
 </script>
 
@@ -75,6 +173,10 @@ onMounted(load);
       <NButton type="primary" @click="showModal = true">
         <i class="ph ph-plus" style="margin-right: 4px;" /> Add Meeting
       </NButton>
+      <NButton secondary :loading="importing" @click="($refs.icsInput as HTMLInputElement)?.click()">
+        <i class="ph ph-calendar-plus" style="margin-right: 4px;" /> Import from Outlook (.ics)
+      </NButton>
+      <input ref="icsInput" type="file" accept=".ics" style="display:none;" @change="handleIcsImport" />
     </NSpace>
 
     <NCollapse v-if="meetings.length > 0">

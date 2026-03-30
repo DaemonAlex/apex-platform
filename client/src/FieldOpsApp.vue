@@ -127,6 +127,17 @@ function getOpsForDate(timestamp: number) {
 
 onMounted(load);
 
+const userOptions = ref<{ label: string; value: string }[]>([]);
+(async () => {
+  try {
+    const tk = token();
+    if (!tk) return;
+    const res = await fetch('/api/users', { headers: { Authorization: 'Bearer ' + tk } });
+    const data = await res.json();
+    userOptions.value = (data.users || []).filter((u: any) => u.email !== 'service@apex.local').map((u: any) => ({ label: u.name, value: u.name }));
+  } catch {}
+})();
+
 const { naiveTheme, themeOverrides } = useTheme();
 
 const { message: msg } = createDiscreteApi(['message']);
@@ -158,24 +169,30 @@ async function openDetail2(op: any) {
   showDetail.value = true;
   detailLoading.value = true;
   try {
-    const res = await fetch(`/api/fieldops/${op.id}/notes`, { headers: { Authorization: 'Bearer ' + token() } });
+    const dbId = op.dbId || String(op.id).replace('field_', '');
+    const res = await fetch(`/api/fieldops/${dbId}/notes`, { headers: { Authorization: 'Bearer ' + token() } });
     const data = await res.json();
     detailNotes.value = data.notes || [];
   } catch { detailNotes.value = []; }
   finally { detailLoading.value = false; }
 }
 
+function getDbId(op: any) {
+  return op.dbId || String(op.id).replace('field_', '');
+}
+
 async function addNote() {
   if (!newNote.value.trim() || !detailOp.value) return;
   addingNote.value = true;
   try {
-    await fetch(`/api/fieldops/${detailOp.value.id}/notes`, {
+    const dbId = getDbId(detailOp.value);
+    await fetch(`/api/fieldops/${dbId}/notes`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
       body: JSON.stringify({ content: newNote.value.trim() }),
     });
     newNote.value = '';
-    const res = await fetch(`/api/fieldops/${detailOp.value.id}/notes`, { headers: { Authorization: 'Bearer ' + token() } });
+    const res = await fetch(`/api/fieldops/${dbId}/notes`, { headers: { Authorization: 'Bearer ' + token() } });
     const data = await res.json();
     detailNotes.value = data.notes || [];
     msg.success('Note added');
@@ -197,7 +214,7 @@ function openCreate() {
 }
 
 function openEdit(op: any) {
-  editingId.value = op.id;
+  editingId.value = op.dbId || String(op.id).replace('field_', '');
   form.value = {
     taskName: op.taskName || op.task_name || '',
     projectName: op.projectName || op.project_name || '',
@@ -238,8 +255,9 @@ async function saveFieldOp() {
   finally { saving.value = false; }
 }
 
-async function deleteFieldOp(id: number) {
-  await fetch('/api/fieldops/' + id, {
+async function deleteFieldOp(id: any) {
+  const dbId = typeof id === 'string' && id.startsWith('field_') ? id.replace('field_', '') : id;
+  await fetch('/api/fieldops/' + dbId, {
     method: 'DELETE',
     headers: { Authorization: 'Bearer ' + token() },
   });
@@ -435,7 +453,7 @@ const statusEditOptions = [
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <NFormItem label="Location"><NInput v-model:value="form.location" placeholder="Building / Room" /></NFormItem>
-        <NFormItem label="Assignee"><NInput v-model:value="form.assignee" placeholder="Technician name" /></NFormItem>
+        <NFormItem label="Assignee"><NSelect v-model:value="form.assignee" :options="userOptions" placeholder="Select technician..." filterable clearable /></NFormItem>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
         <NFormItem label="Date"><NInput v-model:value="form.scheduledDate" placeholder="YYYY-MM-DD" /></NFormItem>

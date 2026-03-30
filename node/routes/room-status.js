@@ -824,6 +824,9 @@ router.get('/:roomId/tech', async (req, res) => {
         networkJacks: [], devices: [], cableRuns: [], credentials: [],
         vlan: null, switchName: null, switchPort: null, poeStatus: null, wifiSsid: null,
         notes: null, updatedBy: null, updatedAt: null,
+        ceilingType: null, ceilingHeight: null, tableType: null, tableSeats: null,
+        existingAv: null, cablePathways: null, powerLocations: null,
+        mountingSurfaces: null, roomDimensions: null, vendorAccessNotes: null,
       });
     }
     const r = result.rows[0];
@@ -837,6 +840,11 @@ router.get('/:roomId/tech', async (req, res) => {
       vlan: r.vlan, switchName: r.switch_name, switchPort: r.switch_port,
       poeStatus: r.poe_status, wifiSsid: r.wifi_ssid,
       notes: r.notes, updatedBy: r.updated_by, updatedAt: r.updated_at,
+      ceilingType: r.ceiling_type, ceilingHeight: r.ceiling_height,
+      tableType: r.table_type, tableSeats: r.table_seats,
+      existingAv: r.existing_av, cablePathways: r.cable_pathways,
+      powerLocations: r.power_locations, mountingSurfaces: r.mounting_surfaces,
+      roomDimensions: r.room_dimensions, vendorAccessNotes: r.vendor_access_notes,
     });
   } catch (error) {
     logger.error('Error fetching room tech details', { error: error.message });
@@ -854,6 +862,9 @@ router.put('/:roomId/tech', async (req, res) => {
       networkJacks, devices, cableRuns, credentials,
       vlan, switchName, switchPort, poeStatus, wifiSsid,
       notes,
+      ceilingType, ceilingHeight, tableType, tableSeats,
+      existingAv, cablePathways, powerLocations, mountingSurfaces,
+      roomDimensions, vendorAccessNotes,
     } = req.body;
 
     const userName = req.user?.name || req.user?.email || 'Unknown';
@@ -863,8 +874,12 @@ router.put('/:roomId/tech', async (req, res) => {
         cisco_workspace_id, cisco_activation_code, cisco_device_serial, cisco_registration_status,
         network_jacks, devices, cable_runs, credentials,
         vlan, switch_name, switch_port, poe_status, wifi_ssid,
-        notes, updated_by, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW())
+        notes, updated_by, updated_at,
+        ceiling_type, ceiling_height, table_type, table_seats,
+        existing_av, cable_pathways, power_locations, mounting_surfaces,
+        room_dimensions, vendor_access_notes)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW(),
+              $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
       ON CONFLICT (room_id) DO UPDATE SET
         platform = COALESCE(EXCLUDED.platform, RoomTechDetails.platform),
         platform_version = COALESCE(EXCLUDED.platform_version, RoomTechDetails.platform_version),
@@ -882,6 +897,16 @@ router.put('/:roomId/tech', async (req, res) => {
         poe_status = COALESCE(EXCLUDED.poe_status, RoomTechDetails.poe_status),
         wifi_ssid = COALESCE(EXCLUDED.wifi_ssid, RoomTechDetails.wifi_ssid),
         notes = COALESCE(EXCLUDED.notes, RoomTechDetails.notes),
+        ceiling_type = COALESCE(EXCLUDED.ceiling_type, RoomTechDetails.ceiling_type),
+        ceiling_height = COALESCE(EXCLUDED.ceiling_height, RoomTechDetails.ceiling_height),
+        table_type = COALESCE(EXCLUDED.table_type, RoomTechDetails.table_type),
+        table_seats = COALESCE(EXCLUDED.table_seats, RoomTechDetails.table_seats),
+        existing_av = COALESCE(EXCLUDED.existing_av, RoomTechDetails.existing_av),
+        cable_pathways = COALESCE(EXCLUDED.cable_pathways, RoomTechDetails.cable_pathways),
+        power_locations = COALESCE(EXCLUDED.power_locations, RoomTechDetails.power_locations),
+        mounting_surfaces = COALESCE(EXCLUDED.mounting_surfaces, RoomTechDetails.mounting_surfaces),
+        room_dimensions = COALESCE(EXCLUDED.room_dimensions, RoomTechDetails.room_dimensions),
+        vendor_access_notes = COALESCE(EXCLUDED.vendor_access_notes, RoomTechDetails.vendor_access_notes),
         updated_by = EXCLUDED.updated_by,
         updated_at = NOW()
       RETURNING *
@@ -892,6 +917,9 @@ router.put('/:roomId/tech', async (req, res) => {
       JSON.stringify(cableRuns || []), JSON.stringify(credentials || []),
       vlan || null, switchName || null, switchPort || null, poeStatus || null, wifiSsid || null,
       notes || null, userName,
+      ceilingType || null, ceilingHeight || null, tableType || null, tableSeats || null,
+      existingAv || null, cablePathways || null, powerLocations || null, mountingSurfaces || null,
+      roomDimensions || null, vendorAccessNotes || null,
     ]);
 
     res.json({ success: true, techDetails: result.rows[0] });

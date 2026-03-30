@@ -75,6 +75,16 @@ const techForm = ref({
   poeStatus: null as string | null,
   wifiSsid: '',
   notes: '',
+  ceilingType: null as string | null,
+  ceilingHeight: '',
+  tableType: null as string | null,
+  tableSeats: null as number | null,
+  existingAv: '',
+  cablePathways: '',
+  powerLocations: '',
+  mountingSurfaces: '',
+  roomDimensions: '',
+  vendorAccessNotes: '',
 });
 
 // Equipment modal
@@ -84,13 +94,21 @@ const equipForm = ref({ category: '', make: '', model: '', serialNumber: '', fir
 
 function setViewMode(mode: string) { viewMode.value = mode; localStorage.setItem('apex_room_view', mode); }
 
-// Filtered rooms
+// Filtered rooms - sorted by urgency: down first, then limited, then overdue, then green
+const ragOrder: Record<string, number> = { red: 0, amber: 1, green: 2, '': 3 };
+
 const filteredRooms = computed(() => {
   return store.rooms.filter(r =>
     (!filterLocation.value || r.locationId === filterLocation.value) &&
     (!filterType.value || r.roomType === filterType.value) &&
     (!filterStatus.value || r.ragStatus === filterStatus.value)
-  );
+  ).sort((a, b) => {
+    // Overdue first
+    if (a.isOverdue && !b.isOverdue) return -1;
+    if (!a.isOverdue && b.isOverdue) return 1;
+    // Then by RAG status severity
+    return (ragOrder[a.ragStatus] ?? 3) - (ragOrder[b.ragStatus] ?? 3);
+  });
 });
 
 const overdueRooms = computed(() => store.rooms.filter(r => r.isOverdue));
@@ -136,11 +154,13 @@ const roomColumns: DataTableColumns<Room> = [
   },
   { title: 'Type', key: 'roomType', width: 120, sorter: 'default', render: (row) => getRoomTypeLabel(row.roomType) },
   {
-    title: 'Status', key: 'ragStatus', width: 110, align: 'center', sorter: 'default',
+    title: 'Status', key: 'ragStatus', width: 130, align: 'center', sorter: 'default',
     render: (row) => {
       const t: Record<string, string> = { green: 'success', amber: 'warning', red: 'error' };
-      const l: Record<string, string> = { green: 'OK', amber: 'Limited', red: 'Down' };
-      return h(NTag, { type: (t[row.ragStatus] || 'default') as any, size: 'small', bordered: false }, () => l[row.ragStatus] || '?');
+      const l: Record<string, string> = { green: 'Operational', amber: 'Limited', red: 'Down' };
+      const tags = [h(NTag, { type: (t[row.ragStatus] || 'default') as any, size: 'small', bordered: false }, () => l[row.ragStatus] || 'Unknown')];
+      if (row.isOverdue) tags.push(h(NTag, { type: 'error' as any, size: 'small', bordered: false, style: 'margin-left:4px;' }, () => 'Overdue'));
+      return h('div', { style: 'display:flex;align-items:center;justify-content:center;gap:4px;' }, tags);
     },
   },
   { title: 'Schedule', key: 'checkFrequency', width: 90, align: 'center', render: (row) => freqLabels[row.checkFrequency] || row.checkFrequency },
@@ -237,6 +257,11 @@ async function openDetail(roomId: string) {
         networkJacks: tech.networkJacks || [], devices: tech.devices || [],
         vlan: tech.vlan || '', switchName: tech.switchName || '', switchPort: tech.switchPort || '',
         poeStatus: tech.poeStatus, wifiSsid: tech.wifiSsid || '', notes: tech.notes || '',
+        ceilingType: tech.ceilingType, ceilingHeight: tech.ceilingHeight || '',
+        tableType: tech.tableType, tableSeats: tech.tableSeats,
+        existingAv: tech.existingAv || '', cablePathways: tech.cablePathways || '',
+        powerLocations: tech.powerLocations || '', mountingSurfaces: tech.mountingSurfaces || '',
+        roomDimensions: tech.roomDimensions || '', vendorAccessNotes: tech.vendorAccessNotes || '',
       };
     }
   } catch (e) { detailHistory.value = []; detailEquipment.value = []; detailTech.value = null; detailDocs.value = []; }
@@ -493,10 +518,10 @@ const { naiveTheme, themeOverrides, colors } = useTheme();
 <NConfigProvider :theme="naiveTheme" :theme-overrides="themeOverrides">
 <div style="background:transparent;">
 
-  <h1 style="margin:0 0 16px 0;font-size:1.5rem;">Room Status</h1>
+  <h1 style="margin:0 0 24px 0;font-size:1.5rem;">Room Status</h1>
 
   <!-- Stats -->
-  <NGrid :x-gap="12" :y-gap="12" :cols="5" style="margin-bottom:20px;">
+  <NGrid :x-gap="14" :y-gap="14" :cols="5" style="margin-bottom:28px;">
     <NGi><NCard size="small" style="text-align:center;cursor:pointer;" @click="filterStatus=null;filterLocation=null;activeTab='rooms'"><NStatistic label="Total" :value="store.stats.total" /></NCard></NGi>
     <NGi><NCard size="small" style="text-align:center;cursor:pointer;" @click="filterStatus='green';activeTab='rooms'"><NStatistic label="Operational" :value="store.stats.green"><template #prefix><span style="color:#22c55e;">&#9679;</span></template></NStatistic></NCard></NGi>
     <NGi><NCard size="small" style="text-align:center;cursor:pointer;" @click="filterStatus='amber';activeTab='rooms'"><NStatistic label="Limited" :value="store.stats.amber"><template #prefix><span style="color:#f59e0b;">&#9679;</span></template></NStatistic></NCard></NGi>
@@ -505,7 +530,7 @@ const { naiveTheme, themeOverrides, colors } = useTheme();
   </NGrid>
 
   <!-- Tabs -->
-  <NTabs :value="activeTab" type="line" @update:value="handleTabChange" style="margin-bottom:16px;">
+  <NTabs :value="activeTab" type="line" @update:value="handleTabChange" style="margin-bottom:20px;">
     <NTabPane name="rooms" tab="All Rooms" />
     <NTabPane name="overdue" :tab="'Overdue (' + overdueRooms.length + ')'" />
     <NTabPane name="locations" tab="Locations" />
@@ -515,10 +540,10 @@ const { naiveTheme, themeOverrides, colors } = useTheme();
 
   <!-- ===================== ALL ROOMS TAB ===================== -->
   <template v-if="activeTab === 'rooms' || activeTab === 'overdue'">
-    <NSpace style="margin-bottom:16px;" align="center" :wrap="true">
-      <NSelect v-if="activeTab==='rooms'" v-model:value="filterLocation" :options="locationOptions" placeholder="Location" clearable style="width:180px;" size="small" />
-      <NSelect v-if="activeTab==='rooms'" v-model:value="filterType" :options="typeOptions" placeholder="Type" clearable style="width:150px;" size="small" />
-      <NSelect v-if="activeTab==='rooms'" v-model:value="filterStatus" :options="[{label:'Green',value:'green'},{label:'Amber',value:'amber'},{label:'Red',value:'red'}]" placeholder="Status" clearable style="width:120px;" size="small" />
+    <NSpace style="margin-bottom:20px;" align="center" :wrap="true">
+      <NSelect v-if="activeTab==='rooms'" v-model:value="filterLocation" :options="locationOptions" placeholder="Building" clearable style="width:180px;" size="small" />
+      <NSelect v-if="activeTab==='rooms'" v-model:value="filterType" :options="typeOptions" placeholder="Room Type" clearable style="width:150px;" size="small" />
+      <NSelect v-if="activeTab==='rooms'" v-model:value="filterStatus" :options="[{label:'Operational',value:'green'},{label:'Limited',value:'amber'},{label:'Down',value:'red'}]" placeholder="Status" clearable style="width:140px;" size="small" />
       <NButton type="primary" size="small" @click="showAddRoom=true"><i class="ph ph-plus" style="margin-right:4px;" /> Add Room</NButton>
       <span style="color:#94a3b8;font-size:0.85rem;margin-left:auto;">{{ activeTab==='overdue' ? overdueRooms.length : filteredRooms.length }} rooms</span>
       <NButtonGroup size="small">
@@ -534,8 +559,8 @@ const { naiveTheme, themeOverrides, colors } = useTheme();
         :columns="roomColumns"
         :data="activeTab==='overdue' ? overdueRooms : filteredRooms"
         :row-key="(r: Room) => r.id"
-        :row-props="(r: Room) => ({ style:'cursor:pointer;' + (r.isOverdue ? 'background:rgba(239,68,68,0.03);' : ''), onClick: () => openDetail(r.id) })"
-        :bordered="false" size="small" striped />
+        :row-props="(r: Room) => ({ style:'cursor:pointer;' + (r.ragStatus === 'red' ? 'border-left:3px solid #ef4444;background:rgba(239,68,68,0.04);' : r.ragStatus === 'amber' ? 'border-left:3px solid #f59e0b;background:rgba(245,158,11,0.03);' : r.isOverdue ? 'border-left:3px solid #94a3b8;background:rgba(148,163,184,0.03);' : ''), onClick: () => openDetail(r.id) })"
+        :bordered="false" size="small" />
 
       <!-- CARDS -->
       <div v-else-if="viewMode==='cards'" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;">
@@ -837,6 +862,21 @@ const { naiveTheme, themeOverrides, colors } = useTheme();
                 </div>
               </div>
 
+              <!-- Site Details -->
+              <div v-if="detailTech.ceilingType || detailTech.tableType || detailTech.existingAv || detailTech.roomDimensions" style="margin-bottom:16px;">
+                <div style="font-weight:600;font-size:0.85rem;margin-bottom:6px;"><i class="ph ph-building" style="margin-right:4px;" />Site Details</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;">
+                  <div v-if="detailTech.roomDimensions"><span style="color:#94a3b8;">Dimensions:</span> {{ detailTech.roomDimensions }}</div>
+                  <div v-if="detailTech.ceilingType"><span style="color:#94a3b8;">Ceiling:</span> {{ detailTech.ceilingType }}{{ detailTech.ceilingHeight ? ' - ' + detailTech.ceilingHeight : '' }}</div>
+                  <div v-if="detailTech.tableType"><span style="color:#94a3b8;">Table:</span> {{ detailTech.tableType }}{{ detailTech.tableSeats ? ' (' + detailTech.tableSeats + ' seats)' : '' }}</div>
+                  <div v-if="detailTech.mountingSurfaces"><span style="color:#94a3b8;">Mounting:</span> {{ detailTech.mountingSurfaces }}</div>
+                </div>
+                <div v-if="detailTech.existingAv" style="margin-top:8px;"><span style="color:#94a3b8;">Existing AV:</span> {{ detailTech.existingAv }}</div>
+                <div v-if="detailTech.cablePathways" style="margin-top:4px;"><span style="color:#94a3b8;">Cable Pathways:</span> {{ detailTech.cablePathways }}</div>
+                <div v-if="detailTech.powerLocations" style="margin-top:4px;"><span style="color:#94a3b8;">Power:</span> {{ detailTech.powerLocations }}</div>
+                <div v-if="detailTech.vendorAccessNotes" style="margin-top:4px;"><span style="color:#94a3b8;">Vendor Access:</span> {{ detailTech.vendorAccessNotes }}</div>
+              </div>
+
               <!-- Notes -->
               <div v-if="detailTech.notes" style="margin-top:8px;white-space:pre-wrap;color:#c0c6d4;font-size:0.85rem;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.05);">{{ detailTech.notes }}</div>
             </div>
@@ -918,6 +958,39 @@ const { naiveTheme, themeOverrides, colors } = useTheme();
               <NInput v-model:value="dev.port" placeholder="Gi1/0/12" size="small" />
               <NButton text size="tiny" @click="removeDevice(i)" style="color:#94a3b8;"><i class="ph ph-x" /></NButton>
             </div>
+          </div>
+
+          <!-- Site Details -->
+          <div style="margin-bottom:16px;">
+            <div style="font-weight:600;font-size:0.85rem;margin-bottom:8px;"><i class="ph ph-building" style="margin-right:4px;" />Site Details</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+              <NFormItem label="Room Dimensions" size="small"><NInput v-model:value="techForm.roomDimensions" placeholder="e.g., 20ft x 15ft" /></NFormItem>
+              <NFormItem label="Ceiling Height" size="small"><NInput v-model:value="techForm.ceilingHeight" placeholder="e.g., 9ft" /></NFormItem>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+              <NFormItem label="Ceiling Type" size="small">
+                <NSelect v-model:value="techForm.ceilingType" :options="[
+                  {label:'Drop Ceiling (2x2)',value:'drop-2x2'},{label:'Drop Ceiling (2x4)',value:'drop-2x4'},
+                  {label:'Hard Lid / Drywall',value:'hard-lid'},{label:'Open Ceiling',value:'open'},
+                  {label:'Vaulted',value:'vaulted'},{label:'Other',value:'other'}
+                ]" placeholder="Select..." clearable />
+              </NFormItem>
+              <NFormItem label="Table Configuration" size="small">
+                <NSelect v-model:value="techForm.tableType" :options="[
+                  {label:'Rectangle',value:'rectangle'},{label:'Boat Shape',value:'boat'},
+                  {label:'U-Shape',value:'u-shape'},{label:'Round',value:'round'},
+                  {label:'Standing / No Table',value:'standing'},{label:'Classroom',value:'classroom'},
+                  {label:'Other',value:'other'}
+                ]" placeholder="Select..." clearable />
+              </NFormItem>
+            </div>
+            <NFormItem label="Existing AV Equipment" size="small"><NInput v-model:value="techForm.existingAv" type="textarea" :rows="2" placeholder="What's currently installed that needs to be removed or worked around..." /></NFormItem>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+              <NFormItem label="Cable Pathways" size="small"><NInput v-model:value="techForm.cablePathways" type="textarea" :rows="2" placeholder="Conduit from IDF, pathways to display wall..." /></NFormItem>
+              <NFormItem label="Power Locations" size="small"><NInput v-model:value="techForm.powerLocations" type="textarea" :rows="2" placeholder="Outlets, dedicated circuits, floor boxes..." /></NFormItem>
+            </div>
+            <NFormItem label="Mounting Surfaces" size="small"><NInput v-model:value="techForm.mountingSurfaces" placeholder="e.g., Drywall over steel stud, concrete behind display wall" /></NFormItem>
+            <NFormItem label="Vendor Access Notes" size="small"><NInput v-model:value="techForm.vendorAccessNotes" type="textarea" :rows="2" placeholder="Loading dock hours, escort requirements, parking..." /></NFormItem>
           </div>
 
           <NFormItem label="Notes" size="small"><NInput v-model:value="techForm.notes" type="textarea" :rows="2" placeholder="Additional technical notes..." /></NFormItem>

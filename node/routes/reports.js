@@ -420,6 +420,144 @@ router.get('/timeline', async (req, res) => {
   }
 });
 
+// GET /reports/my-projects - Projects where the user has assigned tasks
+router.get('/my-projects', async (req, res) => {
+  try {
+    let userName = req.user?.name || '';
+    if (!userName && req.user?.userId) {
+      const u = await pool.query('SELECT name FROM users WHERE id = $1', [req.user.userId]);
+      userName = u.rows[0]?.name || '';
+    }
+    if (!userName) return res.json({ projects: [] });
+
+    const result = await pool.query(`
+      SELECT id, name, status, type, sitelocation, progress, duedate, tasks, project_manager
+      FROM projects
+      WHERE parent_project_id IS NULL
+        AND status IN ('active', 'in-progress', 'planning', 'scheduled', 'on-hold')
+    `);
+
+    const myProjects = [];
+    for (const row of result.rows) {
+      const tasks = typeof row.tasks === 'string' ? JSON.parse(row.tasks) : (row.tasks || []);
+      const myTasks = tasks.filter(t => t.assignee === userName && t.status !== 'completed');
+      const isPM = row.project_manager === userName;
+      if (myTasks.length === 0 && !isPM) continue;
+
+      const overdueTasks = myTasks.filter(t => t.endDate && new Date(t.endDate) < new Date());
+      const nextTask = myTasks
+        .filter(t => t.endDate)
+        .sort((a, b) => new Date(a.endDate).getTime() - new Date(b.endDate).getTime())[0];
+
+      myProjects.push({
+        id: row.id, name: row.name, status: row.status, type: row.type,
+        siteLocation: row.sitelocation, progress: row.progress || 0,
+        dueDate: row.duedate,
+        isPM: isPM,
+        myTaskCount: myTasks.length,
+        myOverdueCount: overdueTasks.length,
+        nextTaskName: nextTask?.name || null,
+        nextTaskDue: nextTask?.endDate || null,
+      });
+    }
+
+    // Sort: projects with overdue tasks first, then by next due date
+    myProjects.sort((a, b) => {
+      if (a.myOverdueCount > 0 && b.myOverdueCount === 0) return -1;
+      if (a.myOverdueCount === 0 && b.myOverdueCount > 0) return 1;
+      if (a.nextTaskDue && b.nextTaskDue) return new Date(a.nextTaskDue).getTime() - new Date(b.nextTaskDue).getTime();
+      return 0;
+    });
+
+    res.json({ projects: myProjects });
+  } catch (error) {
+    console.error('My projects error:', error);
+    res.status(500).json({ error: 'Failed to fetch my projects' });
+  }
+});
+
+// GET /reports/action-queue - Cross-project urgency view from real task data
+router.get('/action-queue', async (req, res) => {
+  try {
+    const now = new Date();
+    const result = await pool.query(`
+      SELECT id, name, status, type, sitelocation, duedate, tasks
+      FROM projects
+      WHERE parent_project_id IS NULL
+        AND status IN ('active', 'in-progress', 'planning', 'scheduled')
+    `);
+
+    const items = [];
+
+    for (const project of result.rows) {
+      const tasks = typeof project.tasks === 'string' ? JSON.parse(project.tasks) : (project.tasks || []);
+
+      for (const task of tasks) {
+        if (task.status === 'completed') continue;
+        if (!task.endDate) continue;
+
+        const due = new Date(task.endDate);
+        const daysUntil = Math.ceil((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+
+        // Calculate urgency
+        let urgency = 'normal';
+        if (daysUntil < 0) urgency = 'overdue';
+        else if (daysUntil <= 2) urgency = 'critical';
+        else if (daysUntil <= 7) urgency = 'soon';
+
+        // Only surface items that need attention (overdue, critical, or soon)
+        if (urgency === 'normal') continue;
+
+        // Check for prerequisites
+        const prereqs = task.prerequisites || [];
+        const blockedPrereqs = prereqs.filter(p => p.status !== 'completed');
+
+        items.push({
+          projectId: project.id,
+          projectName: project.name,
+          projectType: project.type,
+          siteLocation: project.sitelocation,
+          taskId: task.id,
+          taskName: task.name,
+          taskStatus: task.status,
+          assignee: task.assignee || null,
+          priority: task.priority || null,
+          phase: task.phase || null,
+          dueDate: task.endDate,
+          daysUntil,
+          urgency,
+          ragStatus: task.ragStatus || null,
+          notes: task.notes || null,
+          prerequisites: prereqs,
+          blockedBy: blockedPrereqs.length > 0 ? blockedPrereqs.map(p => p.name).join(', ') : null,
+          isBlocked: blockedPrereqs.length > 0,
+        });
+      }
+    }
+
+    // Sort: overdue first, then by days until due
+    items.sort((a, b) => {
+      const urgencyOrder = { overdue: 0, critical: 1, soon: 2, normal: 3 };
+      if (urgencyOrder[a.urgency] !== urgencyOrder[b.urgency]) return urgencyOrder[a.urgency] - urgencyOrder[b.urgency];
+      return a.daysUntil - b.daysUntil;
+    });
+
+    res.json({
+      items,
+      summary: {
+        overdue: items.filter(i => i.urgency === 'overdue').length,
+        critical: items.filter(i => i.urgency === 'critical').length,
+        soon: items.filter(i => i.urgency === 'soon').length,
+        blocked: items.filter(i => i.isBlocked).length,
+        total: items.length,
+      },
+    });
+  } catch (error) {
+    console.error('Action queue error:', error);
+    res.status(500).json({ error: 'Failed to generate action queue' });
+  }
+});
+
 // GET /reports/custom - Flexible report builder endpoint
 router.get('/custom', async (req, res) => {
   try {

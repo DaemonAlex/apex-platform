@@ -31,6 +31,8 @@ function mapProjectRow(row) {
     purchaseOrder: row.purchaseorder,
     parentProjectId: row.parent_project_id,
     locationId: row.location_id || null,
+    projectManager: row.project_manager || null,
+    stakeholders: row.stakeholders || [],
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -305,15 +307,15 @@ router.post('/',
 
     const { id, name, client, type, status, budget, actualBudget, startDate, endDate, description, tasks,
             requestorInfo, siteLocation, businessLine, progress, priority, requestDate, dueDate, estimatedBudget,
-            costCenter, purchaseOrder, parent_project_id } = req.body;
+            costCenter, purchaseOrder, parent_project_id, projectManager, stakeholders } = req.body;
 
     const result = await pool.query(`
       INSERT INTO Projects (id, name, client, type, status, budget, actualBudget, startDate, endDate, description, tasks,
                            requestorInfo, siteLocation, businessLine, progress, priority, requestDate, dueDate, estimatedBudget,
-                           costCenter, purchaseOrder, parent_project_id)
+                           costCenter, purchaseOrder, parent_project_id, project_manager, stakeholders)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
               $12, $13, $14, $15, $16, $17, $18, $19,
-              $20, $21, $22)
+              $20, $21, $22, $23, $24)
       RETURNING *
     `, [
       id, name, client || '', type || '', status || 'planning',
@@ -324,7 +326,8 @@ router.post('/',
       progress || 0, priority || '',
       requestDate ? new Date(requestDate) : null, dueDate ? new Date(dueDate) : null,
       estimatedBudget || 0,
-      costCenter || '', purchaseOrder || '', parent_project_id || null
+      costCenter || '', purchaseOrder || '', parent_project_id || null,
+      projectManager || null, JSON.stringify(stakeholders || [])
     ]);
 
     const project = result.rows[0];
@@ -359,6 +362,7 @@ router.put('/:id',
       businessLine: 'businessline', progress: 'progress', priority: 'priority',
       requestDate: 'requestdate', costCenter: 'costcenter', purchaseOrder: 'purchaseorder',
       parent_project_id: 'parent_project_id', locationId: 'location_id',
+      projectManager: 'project_manager', stakeholders: 'stakeholders',
     };
 
     const setClauses = [];
@@ -369,7 +373,7 @@ router.put('/:id',
       if (jsKey in updates) {
         let val = updates[jsKey];
         // Handle special types
-        if (dbCol === 'tasks' && val) val = JSON.stringify(val);
+        if ((dbCol === 'tasks' || dbCol === 'stakeholders') && val) val = JSON.stringify(val);
         if (['startdate','enddate','duedate','requestdate'].includes(dbCol) && val) val = new Date(val);
         setClauses.push(`${dbCol} = $${idx}`);
         values.push(val);

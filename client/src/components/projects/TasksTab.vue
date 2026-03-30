@@ -18,8 +18,16 @@ const showTaskModal = ref(false);
 const editingTaskId = ref<string | null>(null);
 const taskForm = ref(emptyForm());
 
+const userOptions = ref<{ label: string; value: string }[]>([]);
+(async () => {
+  try {
+    const data = await apiFetch<{ users: any[] }>('/users');
+    userOptions.value = (data.users || []).filter((u: any) => u.email !== 'service@apex.local').map((u: any) => ({ label: u.name, value: u.name }));
+  } catch {}
+})();
+
 function emptyForm() {
-  return { name: '', phase: 'phase_1', priority: 'medium', status: 'not-started', assignee: '', estimatedHours: null as number | null, startDate: '', endDate: '', description: '' };
+  return { name: '', phase: 'phase_1', priority: 'medium', status: 'not-started', assignee: '', estimatedHours: null as number | null, startDate: '', endDate: '', description: '', prerequisites: [] as any[] };
 }
 
 const statusOptions = [
@@ -80,8 +88,56 @@ function openEditTask(task: any) {
     startDate: task.startDate ? new Date(task.startDate).toISOString().split('T')[0] : '',
     endDate: task.endDate ? new Date(task.endDate).toISOString().split('T')[0] : '',
     description: task.description || '',
+    prerequisites: task.prerequisites || [],
   };
   showTaskModal.value = true;
+}
+
+const prereqTypeOptions = [
+  { label: 'Executive Summary Approval', value: 'exec-summary' },
+  { label: 'PO Approval', value: 'po-approval' },
+  { label: 'Vendor Ships Device', value: 'vendor-ship' },
+  { label: 'MAC Address Received', value: 'mac-received' },
+  { label: 'Static IP Request', value: 'ip-request' },
+  { label: 'Firewall Exception', value: 'firewall' },
+  { label: 'CRE Approval', value: 'cre-approval' },
+  { label: 'Manager Approval', value: 'manager-approval' },
+  { label: 'Network Port Activation', value: 'network-port' },
+  { label: 'Custom', value: 'custom' },
+];
+
+const prereqStatusOptions = [
+  { label: 'Pending', value: 'pending' },
+  { label: 'Submitted', value: 'submitted' },
+  { label: 'Waiting on External', value: 'waiting' },
+  { label: 'Approved / Completed', value: 'completed' },
+];
+
+function addPrerequisite() {
+  taskForm.value.prerequisites.push({
+    type: 'custom', name: '', slaDays: null, cutoffDay: null,
+    ticketNumber: '', status: 'pending', submittedDate: null, completedDate: null,
+  });
+}
+
+function removePrerequisite(i: number) {
+  taskForm.value.prerequisites.splice(i, 1);
+}
+
+function addStandardChain() {
+  const chain = [
+    { type: 'exec-summary', name: 'Executive Summary Approval', slaDays: null, cutoffDay: null, ticketNumber: '', status: 'pending', submittedDate: null, completedDate: null },
+    { type: 'po-approval', name: 'PO Issued to Vendor', slaDays: null, cutoffDay: null, ticketNumber: '', status: 'pending', submittedDate: null, completedDate: null },
+    { type: 'vendor-ship', name: 'Vendor Ships Device', slaDays: null, cutoffDay: null, ticketNumber: '', status: 'pending', submittedDate: null, completedDate: null },
+    { type: 'mac-received', name: 'MAC Address Received', slaDays: null, cutoffDay: null, ticketNumber: '', status: 'pending', submittedDate: null, completedDate: null },
+    { type: 'ip-request', name: 'Static IP Reservation', slaDays: 2, cutoffDay: null, ticketNumber: '', status: 'pending', submittedDate: null, completedDate: null },
+    { type: 'firewall', name: 'Firewall Exception', slaDays: 7, cutoffDay: 'wednesday', ticketNumber: '', status: 'pending', submittedDate: null, completedDate: null },
+  ];
+  taskForm.value.prerequisites = [...taskForm.value.prerequisites, ...chain];
+}
+
+function prereqTypeName(type: string) {
+  return prereqTypeOptions.find(o => o.value === type)?.label || type;
 }
 
 async function saveTask() {
@@ -97,6 +153,7 @@ async function saveTask() {
     startDate: taskForm.value.startDate || null,
     endDate: taskForm.value.endDate || null,
     description: taskForm.value.description.trim() || '',
+    prerequisites: taskForm.value.prerequisites,
   };
 
   try {
@@ -131,7 +188,15 @@ async function saveTask() {
 const columns: DataTableColumns<any> = [
   {
     title: 'Task', key: 'name', sorter: 'default',
-    render: (row) => h('span', { style: 'font-weight: 500;' }, row.name),
+    render: (row) => {
+      const prereqs = row.prerequisites || [];
+      const pending = prereqs.filter((p: any) => p.status !== 'completed');
+      const children: any[] = [h('span', { style: 'font-weight: 500;' }, row.name)];
+      if (pending.length > 0) {
+        children.push(h(NTag, { type: 'warning', size: 'small', bordered: false, style: 'margin-left: 8px; font-size: 0.75rem;' }, () => `${pending.length} prereq${pending.length > 1 ? 's' : ''} pending`));
+      }
+      return h('span', { style: 'display: inline-flex; align-items: center;' }, children);
+    },
   },
   {
     title: 'Phase', key: 'phase', width: 100, sorter: 'default',
@@ -231,7 +296,7 @@ const stats = computed(() => ({
             <NSelect v-model:value="taskForm.status" :options="statusOptions" />
           </NFormItem>
           <NFormItem label="Assignee">
-            <NInput v-model:value="taskForm.assignee" placeholder="Who is responsible?" />
+            <NSelect v-model:value="taskForm.assignee" :options="userOptions" placeholder="Select assignee..." filterable clearable />
           </NFormItem>
         </div>
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
@@ -248,6 +313,29 @@ const stats = computed(() => ({
         <NFormItem label="Description">
           <NInput v-model:value="taskForm.description" type="textarea" :rows="2" placeholder="Additional details..." />
         </NFormItem>
+        <!-- Prerequisites -->
+        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.06);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <span style="font-weight: 600; font-size: 0.9rem;"><i class="ph ph-list-checks" style="margin-right: 4px;" /> Prerequisites</span>
+            <NSpace :size="4">
+              <NButton size="tiny" @click="addStandardChain">+ Standard Chain</NButton>
+              <NButton size="tiny" @click="addPrerequisite">+ Custom</NButton>
+            </NSpace>
+          </div>
+          <div v-for="(p, i) in taskForm.prerequisites" :key="i"
+            style="display: grid; grid-template-columns: 1fr 100px 110px 24px; gap: 8px; align-items: center; margin-bottom: 6px; padding: 6px 8px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.06);">
+            <div>
+              <div style="font-size: 0.85rem; font-weight: 500;">{{ prereqTypeName(p.type) }}</div>
+              <NInput v-if="p.type === 'custom'" v-model:value="p.name" placeholder="Prerequisite name" size="small" style="margin-top: 4px;" />
+            </div>
+            <NSelect v-model:value="p.status" :options="prereqStatusOptions" size="small" />
+            <NInput v-model:value="p.ticketNumber" placeholder="Ticket #" size="small" />
+            <NButton text size="tiny" @click="removePrerequisite(i)" style="color: #94a3b8;"><i class="ph ph-x" /></NButton>
+          </div>
+          <div v-if="taskForm.prerequisites.length === 0" style="color: #94a3b8; font-size: 0.85rem; padding: 8px 0;">
+            No prerequisites. Add the standard chain (Exec Summary > PO > Vendor > MAC > IP > Firewall) or add custom ones.
+          </div>
+        </div>
       </NForm>
       <template #action>
         <NSpace justify="end">

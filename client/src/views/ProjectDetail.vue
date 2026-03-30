@@ -69,13 +69,13 @@ onMounted(loadProject);
         <!-- Tabs -->
         <NTabs type="line" animated>
           <NTabPane name="overview" tab="Overview">
-            <OverviewTab :project="project" />
+            <OverviewTab :project="project" @refresh="loadProject" />
           </NTabPane>
           <NTabPane name="tasks" :tab="'Tasks (' + (project.tasks?.length || 0) + ')'">
             <TasksTab :project-id="projectId" :tasks="project.tasks || []" @refresh="loadProject" />
           </NTabPane>
-          <NTabPane name="people" tab="People">
-            <PeopleTab :project-id="projectId" />
+          <NTabPane name="people" tab="Stakeholders">
+            <PeopleTab :project-id="projectId" @refresh="loadProject" />
           </NTabPane>
           <NTabPane name="notes" tab="Notes">
             <NotesTab :project-id="projectId" />
