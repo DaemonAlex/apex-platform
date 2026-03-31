@@ -26,6 +26,7 @@ const contactsRoutes = require('./routes/contacts');
 const meetingsRoutes = require('./routes/meetings');
 const documentsRoutes = require('./routes/documents');
 const vendorRoutes = require('./routes/vendors');
+const ciscoRoutes = require('./routes/cisco');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -80,7 +81,7 @@ const authLimiter = rateLimit({
 app.use(cors({
   origin: process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',') : ['http://localhost', 'http://localhost:80', 'https://daemonscripts.com'],
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-auth-token']
 }));
 
@@ -118,6 +119,7 @@ app.use('/api/contacts', authenticateToken, contactsRoutes);
 app.use('/api/meetings', authenticateToken, meetingsRoutes);
 app.use('/api/documents', authenticateToken, documentsRoutes);
 app.use('/api/vendors', authenticateToken, vendorRoutes);
+app.use('/api/cisco', authenticateToken, ciscoRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {
