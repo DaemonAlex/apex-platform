@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const logger = require('../utils/logger');
+const { auditLog } = require('../middleware/audit');
 const router = express.Router();
 
 // ==================== MEETINGS ====================
@@ -55,7 +56,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST /api/meetings - Create meeting
-router.post('/', async (req, res) => {
+router.post('/', auditLog('Meeting created', 'project', 'info'), async (req, res) => {
   try {
     const { projectId, meetingType, title, meetingDate, attendees, agenda, notes, actionItems } = req.body;
     if (!projectId || !title || !meetingDate) {
@@ -78,7 +79,7 @@ router.post('/', async (req, res) => {
 });
 
 // PUT /api/meetings/:id - Update meeting
-router.put('/:id', async (req, res) => {
+router.put('/:id', auditLog('Meeting updated', 'project', 'info'), async (req, res) => {
   try {
     const { title, meetingType, meetingDate, attendees, agenda, notes, actionItems } = req.body;
     const setClauses = [];
@@ -107,7 +108,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE /api/meetings/:id
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', auditLog('Meeting deleted', 'project', 'warning'), async (req, res) => {
   try {
     await pool.query('DELETE FROM Meetings WHERE id = $1', [req.params.id]);
     res.json({ success: true });
@@ -148,7 +149,7 @@ router.get('/submittals/project/:projectId', async (req, res) => {
 });
 
 // POST /api/meetings/submittals - Create submittal or RFI
-router.post('/submittals', async (req, res) => {
+router.post('/submittals', auditLog('Submittal created', 'project', 'info'), async (req, res) => {
   try {
     const { projectId, type, number, title, submittedBy, status, submittedDate, notes } = req.body;
     if (!projectId || !title) return res.status(400).json({ error: 'projectId and title are required' });
@@ -168,7 +169,7 @@ router.post('/submittals', async (req, res) => {
 });
 
 // PUT /api/meetings/submittals/:id - Update submittal status
-router.put('/submittals/:id', async (req, res) => {
+router.put('/submittals/:id', auditLog('Submittal updated', 'project', 'info'), async (req, res) => {
   try {
     const { status, responseDate, notes, number, title } = req.body;
     const setClauses = [];
@@ -195,7 +196,7 @@ router.put('/submittals/:id', async (req, res) => {
 });
 
 // DELETE /api/meetings/submittals/:id
-router.delete('/submittals/:id', async (req, res) => {
+router.delete('/submittals/:id', auditLog('Submittal deleted', 'project', 'warning'), async (req, res) => {
   try {
     await pool.query('DELETE FROM Submittals WHERE id = $1', [req.params.id]);
     res.json({ success: true });

@@ -30,10 +30,15 @@ let requestQueue = Promise.resolve();
 let lastRequestTime = 0;
 
 function isConfigured() {
-  return !!(process.env.CISCO_CLIENT_ID && process.env.CISCO_CLIENT_SECRET);
+  return !!(process.env.CISCO_PERSONAL_TOKEN || (process.env.CISCO_CLIENT_ID && process.env.CISCO_CLIENT_SECRET));
 }
 
 async function getAccessToken() {
+  // Personal Access Token takes priority - skip OAuth entirely
+  if (process.env.CISCO_PERSONAL_TOKEN) {
+    return process.env.CISCO_PERSONAL_TOKEN;
+  }
+
   // Return cached token if still valid (60s buffer for clock skew)
   if (accessToken && tokenExpiry && Date.now() < tokenExpiry - 60000) {
     return accessToken;

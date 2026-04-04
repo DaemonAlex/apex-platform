@@ -350,6 +350,7 @@ router.post('/',
 
 // Update project (partial updates supported)
 router.put('/:id',
+  auditLog('Project updated', 'project', 'info'),
   async (req, res) => {
   try {
     const updates = req.body;
@@ -444,7 +445,7 @@ router.delete('/:id',
 });
 
 // Add time entry to project
-router.post('/:projectId/time-entry', async (req, res) => {
+router.post('/:projectId/time-entry', auditLog('Time entry added', 'project', 'info'), async (req, res) => {
   try {
     const { projectId } = req.params;
     const { taskId, employee, hours, date, description } = req.body;
@@ -520,7 +521,7 @@ router.post('/:projectId/time-entry', async (req, res) => {
 
 
 // Update specific task in project
-router.put('/:projectId/tasks/:taskId', async (req, res) => {
+router.put('/:projectId/tasks/:taskId', auditLog('Task updated', 'project', 'info'), async (req, res) => {
   try {
     const { projectId, taskId } = req.params;
     const taskUpdate = req.body;
@@ -565,7 +566,7 @@ router.put('/:projectId/tasks/:taskId', async (req, res) => {
 });
 
 // Create task in project
-router.post('/:projectId/tasks', async (req, res) => {
+router.post('/:projectId/tasks', auditLog('Task created', 'project', 'info'), async (req, res) => {
   try {
     const { projectId } = req.params;
     const newTask = req.body;
@@ -612,7 +613,7 @@ router.post('/:projectId/tasks', async (req, res) => {
 });
 
 // Delete task from project
-router.delete('/:projectId/tasks/:taskId', async (req, res) => {
+router.delete('/:projectId/tasks/:taskId', auditLog('Task deleted', 'project', 'warning'), async (req, res) => {
   try {
     const { projectId, taskId } = req.params;
 
@@ -735,7 +736,7 @@ router.get('/:projectId/notes', async (req, res) => {
 });
 
 // POST /api/projects/:projectId/notes - Add a dated note
-router.post('/:projectId/notes', async (req, res) => {
+router.post('/:projectId/notes', auditLog('Project note added', 'project', 'info'), async (req, res) => {
   try {
     const { content } = req.body;
     if (!content?.trim()) return res.status(400).json({ error: 'Content is required' });
@@ -753,7 +754,7 @@ router.post('/:projectId/notes', async (req, res) => {
 });
 
 // DELETE /api/projects/:projectId/notes/:noteId
-router.delete('/:projectId/notes/:noteId', async (req, res) => {
+router.delete('/:projectId/notes/:noteId', auditLog('Project note deleted', 'project', 'info'), async (req, res) => {
   try {
     await pool.query('DELETE FROM ProjectNotes WHERE id = $1 AND project_id = $2', [req.params.noteId, req.params.projectId]);
     res.json({ success: true });
@@ -786,7 +787,7 @@ router.get('/:projectId/visits', async (req, res) => {
 });
 
 // POST /api/projects/:projectId/visits
-router.post('/:projectId/visits', async (req, res) => {
+router.post('/:projectId/visits', auditLog('Site visit logged', 'project', 'info'), async (req, res) => {
   try {
     const { visitor, visitDate, purpose, summary, ticketNumber } = req.body;
     if (!visitor?.trim() || !visitDate) return res.status(400).json({ error: 'visitor and visitDate are required' });
@@ -805,7 +806,7 @@ router.post('/:projectId/visits', async (req, res) => {
 });
 
 // DELETE /api/projects/:projectId/visits/:visitId
-router.delete('/:projectId/visits/:visitId', async (req, res) => {
+router.delete('/:projectId/visits/:visitId', auditLog('Site visit deleted', 'project', 'info'), async (req, res) => {
   try {
     await pool.query('DELETE FROM SiteVisits WHERE id = $1 AND project_id = $2', [req.params.visitId, req.params.projectId]);
     res.json({ success: true });
@@ -854,7 +855,7 @@ router.get('/:projectId/rooms', async (req, res) => {
 });
 
 // POST /api/projects/:projectId/rooms - Link room(s) to a project
-router.post('/:projectId/rooms', async (req, res) => {
+router.post('/:projectId/rooms', auditLog('Room linked to project', 'project', 'info'), async (req, res) => {
   try {
     const { roomId, roomIds, notes } = req.body;
     const ids = roomIds || (roomId ? [roomId] : []);
@@ -875,7 +876,7 @@ router.post('/:projectId/rooms', async (req, res) => {
 });
 
 // DELETE /api/projects/:projectId/rooms/:roomId - Unlink room from project
-router.delete('/:projectId/rooms/:roomId', async (req, res) => {
+router.delete('/:projectId/rooms/:roomId', auditLog('Room unlinked from project', 'project', 'info'), async (req, res) => {
   try {
     await pool.query(
       'DELETE FROM ProjectRooms WHERE project_id = $1 AND room_id = $2',

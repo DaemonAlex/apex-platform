@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const logger = require('../utils/logger');
+const { auditLog } = require('../middleware/audit');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs').promises;
@@ -58,7 +59,7 @@ router.get('/project/:projectId', async (req, res) => {
 });
 
 // POST /api/documents/project/:projectId - Upload document
-router.post('/project/:projectId', upload.single('file'), async (req, res) => {
+router.post('/project/:projectId', upload.single('file'), auditLog('Document uploaded', 'project', 'info'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
@@ -105,7 +106,7 @@ router.get('/:id/download', async (req, res) => {
 });
 
 // DELETE /api/documents/:id - Delete a document
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', auditLog('Document deleted', 'project', 'warning'), async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM ProjectDocuments WHERE id = $1', [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Document not found' });

@@ -222,6 +222,65 @@ router.get('/project/:id', async (req, res) => {
 });
 
 // GET /reports/user/:userId - IC-level task/hours summary
+// GET /reports/my-work - Tasks assigned to the currently logged-in user
+router.get('/my-work', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    const userName = req.user?.name || req.user?.email || '';
+
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+    // Look up user name if we only have email
+    let lookupName = userName;
+    if (!lookupName || lookupName.includes('@')) {
+      const u = await pool.query('SELECT name FROM users WHERE id = $1', [userId]);
+      if (u.rows.length) lookupName = u.rows[0].name;
+    }
+
+    if (!lookupName) return res.json({ user: { name: 'Unknown' }, summary: { totalTasks: 0, completed: 0, active: 0, dueSoon: 0, overdue: 0, estimatedHours: 0, completedHours: 0 }, tasks: [] });
+
+    // Reuse the same logic as /user/:userId but with current user
+    const taskResult = await pool.query(`
+      SELECT p.id AS project_id, p.name AS project_name, t.*
+      FROM projects p, jsonb_array_elements(p.tasks) AS t
+      WHERE parent_project_id IS NULL
+        AND LOWER(t->>'assignee') = LOWER($1)
+    `, [lookupName]);
+
+    const parsedTasks = taskResult.rows.map(row => {
+      const task = typeof row.t === 'string' ? JSON.parse(row.t) : row.t;
+      return { projectId: row.project_id, projectName: row.project_name, ...task };
+    });
+
+    const now = new Date();
+    const sevenDaysOut = new Date(now.getTime() + 7 * 86400000);
+    const completed = parsedTasks.filter(t => t.status === 'completed');
+    const active = parsedTasks.filter(t => t.status !== 'completed');
+    const dueSoon = active.filter(t => t.endDate && new Date(t.endDate) <= sevenDaysOut && new Date(t.endDate) >= now);
+    const overdue = active.filter(t => t.endDate && new Date(t.endDate) < now);
+
+    res.json({
+      user: { name: lookupName },
+      summary: {
+        totalTasks: parsedTasks.length,
+        completed: completed.length,
+        active: active.length,
+        dueSoon: dueSoon.length,
+        overdue: overdue.length,
+        estimatedHours: parsedTasks.reduce((s, t) => s + (parseFloat(t.estimatedHours) || 0), 0),
+        completedHours: completed.reduce((s, t) => s + (parseFloat(t.estimatedHours) || 0), 0),
+      },
+      tasks: parsedTasks.map(t => ({
+        id: t.id, name: t.name, projectId: t.projectId, projectName: t.projectName,
+        status: t.status, priority: t.priority, phase: t.phase,
+        endDate: t.endDate, estimatedHours: t.estimatedHours,
+      })),
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to generate my work report' });
+  }
+});
+
 router.get('/user/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
@@ -796,6 +855,367 @@ router.get('/custom', async (req, res) => {
   } catch (error) {
     console.error('Custom report error:', error);
     res.status(500).json({ error: 'Failed to generate custom report', details: error.message });
+  }
+});
+
+// GET /reports/health-matrix - One row per project with color-coded signals
+router.get('/health-matrix', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        p.id, p.name, p.status, p.type, p.progress,
+        p.project_manager,
+        COALESCE(p.estimatedbudget, p.budget, 0) as planned_budget,
+        COALESCE(p.actualbudget, 0) as actual_budget,
+        p.duedate, p.enddate, p.startdate,
+        p.businessline,
+        p.priority,
+        p.tasks,
+        p.updated_at
+      FROM projects p
+      WHERE p.parent_project_id IS NULL
+        AND p.status NOT IN ('cancelled')
+      ORDER BY
+        CASE p.status
+          WHEN 'active' THEN 1 WHEN 'in-progress' THEN 1
+          WHEN 'on-hold' THEN 2 WHEN 'planning' THEN 3
+          WHEN 'scheduled' THEN 4 WHEN 'completed' THEN 5
+          ELSE 6
+        END,
+        p.duedate ASC NULLS LAST
+    `);
+
+    const projects = result.rows.map(p => {
+      const tasks = p.tasks ? (typeof p.tasks === 'string' ? JSON.parse(p.tasks) : p.tasks) : [];
+      const totalTasks = tasks.length;
+      const completedTasks = tasks.filter((t) => t.status === 'completed').length;
+      const overdueTasks = tasks.filter((t) => t.status !== 'completed' && t.endDate && new Date(t.endDate) < new Date()).length;
+      const redTasks = tasks.filter((t) => t.ragStatus === 'red').length;
+
+      // Budget signal
+      const planned = parseFloat(p.planned_budget) || 0;
+      const actual = parseFloat(p.actual_budget) || 0;
+      const budgetVariance = planned > 0 ? ((actual - planned) / planned) * 100 : 0;
+      let budgetSignal = 'green';
+      if (planned > 0 && budgetVariance > 10) budgetSignal = 'red';
+      else if (planned > 0 && budgetVariance > 0) budgetSignal = 'amber';
+      else if (planned === 0 && actual === 0) budgetSignal = 'gray';
+
+      // Schedule signal
+      const dueDate = p.duedate || p.enddate;
+      let scheduleSignal = 'green';
+      let daysUntilDue = null;
+      if (dueDate && p.status !== 'completed') {
+        daysUntilDue = Math.ceil((new Date(dueDate).getTime() - Date.now()) / 86400000);
+        if (daysUntilDue < 0) scheduleSignal = 'red';
+        else if (daysUntilDue <= 7) scheduleSignal = 'amber';
+      } else if (!dueDate) {
+        scheduleSignal = 'gray';
+      }
+      if (p.status === 'completed') scheduleSignal = 'green';
+
+      // Task signal
+      let taskSignal = 'green';
+      if (overdueTasks > 0 || redTasks > 0) taskSignal = 'red';
+      else if (totalTasks > 0 && completedTasks < totalTasks * 0.5 && p.progress > 50) taskSignal = 'amber';
+      else if (totalTasks === 0) taskSignal = 'gray';
+
+      // Overall risk
+      const signals = [budgetSignal, scheduleSignal, taskSignal];
+      let riskLevel = 'green';
+      if (signals.includes('red')) riskLevel = 'red';
+      else if (signals.includes('amber')) riskLevel = 'amber';
+      else if (signals.every(s => s === 'gray')) riskLevel = 'gray';
+
+      return {
+        id: p.id,
+        name: p.name,
+        status: p.status,
+        type: p.type,
+        pm: p.project_manager || null,
+        businessLine: p.businessline || null,
+        priority: p.priority || null,
+        progress: p.progress || 0,
+        budget: {
+          signal: budgetSignal,
+          planned,
+          actual,
+          variance: Math.round(budgetVariance),
+        },
+        schedule: {
+          signal: scheduleSignal,
+          dueDate,
+          daysUntilDue,
+        },
+        tasks: {
+          signal: taskSignal,
+          total: totalTasks,
+          completed: completedTasks,
+          overdue: overdueTasks,
+        },
+        risk: riskLevel,
+        updatedAt: p.updated_at,
+      };
+    });
+
+    // Summary counts
+    const summary = {
+      total: projects.length,
+      red: projects.filter(p => p.risk === 'red').length,
+      amber: projects.filter(p => p.risk === 'amber').length,
+      green: projects.filter(p => p.risk === 'green').length,
+    };
+
+    res.json({ projects, summary });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to generate health matrix', details: error.message });
+  }
+});
+
+// GET /reports/attention - Aggregated feed of items needing attention
+router.get('/attention', async (req, res) => {
+  try {
+    const items = [];
+
+    // 1. Overdue tasks from projects (JSONB extraction)
+    try {
+      const tasksResult = await pool.query(`
+        SELECT
+          p.id as project_id,
+          p.name as project_name,
+          t->>'id' as task_id,
+          t->>'name' as task_name,
+          t->>'assignee' as assignee,
+          t->>'priority' as priority,
+          t->>'status' as task_status,
+          t->>'endDate' as end_date
+        FROM projects p,
+        jsonb_array_elements(p.tasks) AS t
+        WHERE p.parent_project_id IS NULL
+          AND p.status IN ('active', 'in-progress', 'planning', 'scheduled')
+          AND (t->>'status') IS DISTINCT FROM 'completed'
+          AND (t->>'endDate') IS NOT NULL
+          AND (t->>'endDate')::TIMESTAMPTZ < NOW()
+        ORDER BY (t->>'endDate')::TIMESTAMPTZ ASC
+        LIMIT 25
+      `);
+      tasksResult.rows.forEach(r => {
+        const daysOverdue = Math.floor((Date.now() - new Date(r.end_date).getTime()) / 86400000);
+        items.push({
+          type: 'overdue_task',
+          severity: daysOverdue > 14 ? 'critical' : daysOverdue > 7 ? 'warning' : 'info',
+          title: r.task_name,
+          subtitle: r.project_name,
+          assignee: r.assignee || null,
+          priority: r.priority || 'medium',
+          daysOverdue,
+          dueDate: r.end_date,
+          projectId: r.project_id,
+          taskId: r.task_id,
+          icon: 'ph-warning-circle',
+          color: '#ef4444',
+        });
+      });
+    } catch (e) { /* tasks query may fail if no projects exist */ }
+
+    // 2. Overdue room checks
+    try {
+      const roomsResult = await pool.query(`
+        SELECT
+          r.id, r.room_id, r.name, r.check_frequency,
+          l.name as location_name,
+          h.rag_status, h.checked_at as last_checked,
+          h.checked_by
+        FROM Rooms r
+        LEFT JOIN Locations l ON l.id = r.location_id
+        LEFT JOIN LATERAL (
+          SELECT rag_status, checked_at, checked_by
+          FROM RoomCheckHistory
+          WHERE room_id = r.room_id
+          ORDER BY checked_at DESC LIMIT 1
+        ) h ON true
+        WHERE r.deleted_at IS NULL
+          AND (
+            h.checked_at IS NULL
+            OR CASE
+              WHEN r.check_frequency = 'daily' THEN h.checked_at + INTERVAL '1 day' < NOW()
+              WHEN r.check_frequency = 'biweekly' THEN h.checked_at + INTERVAL '14 days' < NOW()
+              WHEN r.check_frequency = 'monthly' THEN h.checked_at + INTERVAL '1 month' < NOW()
+              ELSE h.checked_at + INTERVAL '7 days' < NOW()
+            END
+          )
+        ORDER BY h.checked_at ASC NULLS FIRST
+        LIMIT 15
+      `);
+      roomsResult.rows.forEach(r => {
+        const daysOverdue = r.last_checked
+          ? Math.floor((Date.now() - new Date(r.last_checked).getTime()) / 86400000)
+          : 999;
+        items.push({
+          type: 'overdue_room_check',
+          severity: r.rag_status === 'red' ? 'critical' : daysOverdue > 14 ? 'warning' : 'info',
+          title: r.name,
+          subtitle: r.location_name || 'Unknown location',
+          lastChecked: r.last_checked,
+          ragStatus: r.rag_status || 'unknown',
+          daysOverdue: daysOverdue === 999 ? null : daysOverdue,
+          neverChecked: !r.last_checked,
+          roomId: r.room_id,
+          icon: 'ph-monitor',
+          color: r.rag_status === 'red' ? '#ef4444' : '#f59e0b',
+        });
+      });
+    } catch (e) { /* rooms may not exist */ }
+
+    // 3. Overdue / stale field ops
+    try {
+      const fieldOpsResult = await pool.query(`
+        SELECT id, project_name, task_name, type, location, scheduled_date,
+               assignee, status
+        FROM fieldops
+        WHERE scheduled_date < CURRENT_DATE
+          AND status NOT IN ('completed', 'cancelled')
+        ORDER BY scheduled_date ASC
+        LIMIT 15
+      `);
+      fieldOpsResult.rows.forEach(r => {
+        const daysOverdue = Math.floor((Date.now() - new Date(r.scheduled_date).getTime()) / 86400000);
+        items.push({
+          type: 'overdue_fieldop',
+          severity: daysOverdue > 7 ? 'warning' : 'info',
+          title: r.task_name || 'Untitled work',
+          subtitle: r.project_name || r.location || '',
+          assignee: r.assignee || null,
+          fieldOpType: r.type,
+          daysOverdue,
+          scheduledDate: r.scheduled_date,
+          fieldOpId: r.id,
+          icon: 'ph-wrench',
+          color: '#f59e0b',
+        });
+      });
+    } catch (e) { /* fieldops may not exist */ }
+
+    // 4. Stale pending submittals (> 5 days)
+    try {
+      const submittalsResult = await pool.query(`
+        SELECT s.id, s.project_id, p.name as project_name,
+               s.type, s.title, s.status, s.submitted_date
+        FROM Submittals s
+        LEFT JOIN projects p ON s.project_id = p.id
+        WHERE s.status = 'pending'
+          AND s.submitted_date IS NOT NULL
+          AND (NOW() - s.submitted_date) > INTERVAL '5 days'
+        ORDER BY s.submitted_date ASC
+        LIMIT 10
+      `);
+      submittalsResult.rows.forEach(r => {
+        const daysPending = Math.floor((Date.now() - new Date(r.submitted_date).getTime()) / 86400000);
+        items.push({
+          type: 'stale_submittal',
+          severity: daysPending > 14 ? 'warning' : 'info',
+          title: r.title,
+          subtitle: r.project_name || '',
+          submittalType: r.type,
+          daysPending,
+          submittedDate: r.submitted_date,
+          projectId: r.project_id,
+          submittalId: r.id,
+          icon: 'ph-file-text',
+          color: '#8b5cf6',
+        });
+      });
+    } catch (e) { /* submittals may not exist */ }
+
+    // 5. Today's schedule
+    const todayItems = [];
+    try {
+      const todayOps = await pool.query(`
+        SELECT id, project_name, task_name, type, location,
+               start_time, end_time, assignee, status
+        FROM fieldops
+        WHERE DATE(scheduled_date) = CURRENT_DATE
+          AND status NOT IN ('completed', 'cancelled')
+        ORDER BY start_time ASC NULLS LAST
+      `);
+      todayOps.rows.forEach(r => {
+        todayItems.push({
+          type: 'fieldop',
+          title: r.task_name || 'Untitled',
+          subtitle: r.project_name || '',
+          location: r.location,
+          startTime: r.start_time,
+          endTime: r.end_time,
+          assignee: r.assignee,
+          status: r.status,
+          fieldOpType: r.type,
+          fieldOpId: r.id,
+        });
+      });
+    } catch (e) { /* fieldops may not exist */ }
+
+    // 6. Room checks due today / this week
+    try {
+      const roomsDueResult = await pool.query(`
+        SELECT
+          r.room_id, r.name, r.check_frequency,
+          l.name as location_name,
+          h.checked_at as last_checked
+        FROM Rooms r
+        LEFT JOIN Locations l ON l.id = r.location_id
+        LEFT JOIN LATERAL (
+          SELECT checked_at FROM RoomCheckHistory
+          WHERE room_id = r.room_id
+          ORDER BY checked_at DESC LIMIT 1
+        ) h ON true
+        WHERE r.deleted_at IS NULL
+          AND h.checked_at IS NOT NULL
+          AND CASE
+            WHEN r.check_frequency = 'daily' THEN
+              h.checked_at + INTERVAL '1 day' BETWEEN NOW() AND NOW() + INTERVAL '1 day'
+            WHEN r.check_frequency = 'biweekly' THEN
+              h.checked_at + INTERVAL '14 days' BETWEEN NOW() AND NOW() + INTERVAL '3 days'
+            WHEN r.check_frequency = 'monthly' THEN
+              h.checked_at + INTERVAL '1 month' BETWEEN NOW() AND NOW() + INTERVAL '3 days'
+            ELSE
+              h.checked_at + INTERVAL '7 days' BETWEEN NOW() AND NOW() + INTERVAL '3 days'
+          END
+        ORDER BY h.checked_at ASC
+        LIMIT 10
+      `);
+      roomsDueResult.rows.forEach(r => {
+        todayItems.push({
+          type: 'room_check_due',
+          title: r.name,
+          subtitle: r.location_name || '',
+          roomId: r.room_id,
+          checkFrequency: r.check_frequency,
+          lastChecked: r.last_checked,
+        });
+      });
+    } catch (e) { /* rooms may not exist */ }
+
+    // Sort attention items: critical first, then warning, then info; within severity by daysOverdue desc
+    const severityOrder = { critical: 0, warning: 1, info: 2 };
+    items.sort((a, b) => {
+      const sa = severityOrder[a.severity] ?? 2;
+      const sb = severityOrder[b.severity] ?? 2;
+      if (sa !== sb) return sa - sb;
+      return (b.daysOverdue || 0) - (a.daysOverdue || 0);
+    });
+
+    res.json({
+      attention: items,
+      today: todayItems,
+      counts: {
+        critical: items.filter(i => i.severity === 'critical').length,
+        warning: items.filter(i => i.severity === 'warning').length,
+        info: items.filter(i => i.severity === 'info').length,
+        todaySchedule: todayItems.length,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to generate attention feed', details: error.message });
   }
 });
 

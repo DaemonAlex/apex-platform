@@ -1,7 +1,49 @@
 const express = require('express');
 const { pool } = require('../db');
 const logger = require('../utils/logger');
+const { auditLog } = require('../middleware/audit');
 const router = express.Router();
+
+// Auto-migration: add new field ops columns if missing
+let migrationDone = false;
+async function ensureFieldOpColumns() {
+  if (migrationDone) return;
+  try {
+    await pool.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fieldops' AND column_name='vendor_id') THEN
+          ALTER TABLE fieldops ADD COLUMN vendor_id INTEGER NULL;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fieldops' AND column_name='vendor_contact') THEN
+          ALTER TABLE fieldops ADD COLUMN vendor_contact VARCHAR(255) NULL;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fieldops' AND column_name='assigned_type') THEN
+          ALTER TABLE fieldops ADD COLUMN assigned_type VARCHAR(20) DEFAULT 'internal';
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fieldops' AND column_name='room_id') THEN
+          ALTER TABLE fieldops ADD COLUMN room_id INTEGER NULL;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fieldops' AND column_name='service_category') THEN
+          ALTER TABLE fieldops ADD COLUMN service_category VARCHAR(50) DEFAULT 'project';
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fieldops' AND column_name='priority') THEN
+          ALTER TABLE fieldops ADD COLUMN priority VARCHAR(20) DEFAULT 'normal';
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fieldops' AND column_name='response_time_hours') THEN
+          ALTER TABLE fieldops ADD COLUMN response_time_hours NUMERIC(6,1) NULL;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fieldops' AND column_name='vendor_name') THEN
+          ALTER TABLE fieldops ADD COLUMN vendor_name VARCHAR(255) NULL;
+        END IF;
+      END $$;
+    `);
+    migrationDone = true;
+    logger.info('Field ops columns migration complete');
+  } catch (err) {
+    logger.error('Field ops migration error', { error: err.message });
+  }
+}
+ensureFieldOpColumns();
 
 // Get all field ops (with optional filters)
 router.get('/', async (req, res) => {
@@ -69,18 +111,22 @@ router.get('/today', async (req, res) => {
 });
 
 // Create field op
-router.post('/', async (req, res) => {
+router.post('/', auditLog('Field op created', 'fieldops', 'info'), async (req, res) => {
   try {
     const { projectId, taskId, taskName, projectName, type, location,
-            scheduledDate, startTime, endTime, assignee, notes, estimatedDuration } = req.body;
+            scheduledDate, startTime, endTime, assignee, notes, estimatedDuration,
+            vendorId, vendorContact, vendorName, assignedType, roomId, serviceCategory, priority } = req.body;
 
     const result = await pool.query(`
       INSERT INTO fieldops (project_id, task_id, task_name, project_name, type, location,
-        scheduled_date, start_time, end_time, assignee, notes, estimated_duration)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        scheduled_date, start_time, end_time, assignee, notes, estimated_duration,
+        vendor_id, vendor_contact, vendor_name, assigned_type, room_id, service_category, priority)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
       RETURNING *
     `, [projectId, taskId, taskName, projectName, type || 'service', location,
-        scheduledDate, startTime || '9:00 AM', endTime || '5:00 PM', assignee, notes, estimatedDuration]);
+        scheduledDate, startTime || '9:00 AM', endTime || '5:00 PM', assignee, notes, estimatedDuration,
+        vendorId || null, vendorContact || null, vendorName || null,
+        assignedType || 'internal', roomId || null, serviceCategory || 'project', priority || 'normal']);
 
     res.status(201).json({ fieldOp: mapFieldOpsRow(result.rows[0]) });
   } catch (error) {
@@ -90,10 +136,12 @@ router.post('/', async (req, res) => {
 });
 
 // Update field op - all fields
-router.put('/:id', async (req, res) => {
+router.put('/:id', auditLog('Field op updated', 'fieldops', 'info'), async (req, res) => {
   try {
     const { status, notes, completedBy, taskName, type, location,
-            scheduledDate, startTime, endTime, assignee, estimatedDuration } = req.body;
+            scheduledDate, startTime, endTime, assignee, estimatedDuration,
+            vendorId, vendorContact, vendorName, assignedType, roomId, serviceCategory, priority,
+            projectId, projectName } = req.body;
     const updates = [];
     const params = [];
     let i = 0;
@@ -103,6 +151,16 @@ router.put('/:id', async (req, res) => {
       if (status === 'completed') {
         updates.push(`completed_at = $${++i}`); params.push(new Date().toISOString());
         if (completedBy) { updates.push(`completed_by = $${++i}`); params.push(completedBy); }
+        // Auto-calculate response time
+        updates.push(`response_time_hours = $${++i}`);
+        params.push(null); // placeholder, calculated below
+        const rtIdx = i;
+        // We'll calculate after the update using created_at
+        const existing = await pool.query('SELECT created_at FROM fieldops WHERE id = $1', [req.params.id]);
+        if (existing.rows.length > 0 && existing.rows[0].created_at) {
+          const hours = (Date.now() - new Date(existing.rows[0].created_at).getTime()) / 3600000;
+          params[rtIdx - 1] = Math.round(hours * 10) / 10;
+        }
       }
     }
     if (notes !== undefined) { updates.push(`notes = $${++i}`); params.push(notes); }
@@ -114,6 +172,15 @@ router.put('/:id', async (req, res) => {
     if (endTime !== undefined) { updates.push(`end_time = $${++i}`); params.push(endTime); }
     if (assignee !== undefined) { updates.push(`assignee = $${++i}`); params.push(assignee); }
     if (estimatedDuration !== undefined) { updates.push(`estimated_duration = $${++i}`); params.push(estimatedDuration); }
+    if (vendorId !== undefined) { updates.push(`vendor_id = $${++i}`); params.push(vendorId || null); }
+    if (vendorContact !== undefined) { updates.push(`vendor_contact = $${++i}`); params.push(vendorContact); }
+    if (vendorName !== undefined) { updates.push(`vendor_name = $${++i}`); params.push(vendorName); }
+    if (assignedType !== undefined) { updates.push(`assigned_type = $${++i}`); params.push(assignedType); }
+    if (roomId !== undefined) { updates.push(`room_id = $${++i}`); params.push(roomId || null); }
+    if (serviceCategory !== undefined) { updates.push(`service_category = $${++i}`); params.push(serviceCategory); }
+    if (priority !== undefined) { updates.push(`priority = $${++i}`); params.push(priority); }
+    if (projectId !== undefined) { updates.push(`project_id = $${++i}`); params.push(projectId); }
+    if (projectName !== undefined) { updates.push(`project_name = $${++i}`); params.push(projectName); }
 
     if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
 
@@ -170,6 +237,67 @@ router.get('/report', async (req, res) => {
       GROUP BY month ORDER BY month DESC LIMIT 12
     `, params);
 
+    // By vendor (JOIN Vendors table)
+    const byVendor = await pool.query(`
+      SELECT f.vendor_id, COALESCE(f.vendor_name, v.name, 'Unknown') as vendor_name,
+        COUNT(*) as count, COUNT(*) FILTER (WHERE f.status = 'completed') as completed,
+        ROUND(AVG(f.response_time_hours)::numeric, 1) as avg_response_hours
+      FROM fieldops f LEFT JOIN vendors v ON f.vendor_id = v.id
+      WHERE f.assigned_type = 'vendor' AND f.vendor_id IS NOT NULL ${dateFilter}
+      GROUP BY f.vendor_id, f.vendor_name, v.name ORDER BY count DESC
+    `, params);
+
+    // By service category
+    const byCategory = await pool.query(`
+      SELECT COALESCE(service_category, 'project') as category, COUNT(*) as count,
+        COUNT(*) FILTER (WHERE status = 'completed') as completed
+      FROM fieldops WHERE 1=1 ${dateFilter} GROUP BY category ORDER BY count DESC
+    `, params);
+
+    // Team workload (internal only, open assignments)
+    const teamWorkload = await pool.query(`
+      SELECT assignee,
+        COUNT(*) FILTER (WHERE status NOT IN ('completed','cancelled')) as open_count,
+        COUNT(*) FILTER (WHERE status = 'completed' AND completed_at >= NOW() - INTERVAL '30 days') as completed_this_month,
+        COUNT(*) FILTER (WHERE status NOT IN ('completed','cancelled') AND scheduled_date < NOW()) as overdue_count,
+        ROUND(AVG(response_time_hours) FILTER (WHERE status = 'completed')::numeric, 1) as avg_response_hours
+      FROM fieldops WHERE assigned_type = 'internal' AND assignee IS NOT NULL
+      GROUP BY assignee ORDER BY open_count DESC
+    `);
+
+    // Vendor performance comparison (last 90 days vs prior 90)
+    const vendorPerf = await pool.query(`
+      SELECT
+        COALESCE(f.vendor_name, v.name, 'Unknown') as vendor_name,
+        COUNT(*) FILTER (WHERE f.scheduled_date >= NOW() - INTERVAL '90 days') as recent_total,
+        COUNT(*) FILTER (WHERE f.status = 'completed' AND f.scheduled_date >= NOW() - INTERVAL '90 days') as recent_completed,
+        COUNT(*) FILTER (WHERE f.scheduled_date >= NOW() - INTERVAL '180 days' AND f.scheduled_date < NOW() - INTERVAL '90 days') as prior_total,
+        COUNT(*) FILTER (WHERE f.status = 'completed' AND f.scheduled_date >= NOW() - INTERVAL '180 days' AND f.scheduled_date < NOW() - INTERVAL '90 days') as prior_completed,
+        ROUND(AVG(f.response_time_hours) FILTER (WHERE f.scheduled_date >= NOW() - INTERVAL '90 days')::numeric, 1) as recent_avg_hours,
+        ROUND(AVG(f.response_time_hours) FILTER (WHERE f.scheduled_date >= NOW() - INTERVAL '180 days' AND f.scheduled_date < NOW() - INTERVAL '90 days')::numeric, 1) as prior_avg_hours
+      FROM fieldops f LEFT JOIN vendors v ON f.vendor_id = v.id
+      WHERE f.assigned_type = 'vendor' AND f.vendor_id IS NOT NULL
+      GROUP BY f.vendor_name, v.name
+    `);
+
+    // Build flags
+    const flags = [];
+    vendorPerf.rows.forEach(v => {
+      const recentRate = parseInt(v.recent_total) > 0 ? (parseInt(v.recent_completed) / parseInt(v.recent_total)) * 100 : 0;
+      const priorRate = parseInt(v.prior_total) > 0 ? (parseInt(v.prior_completed) / parseInt(v.prior_total)) * 100 : 0;
+      if (priorRate > 0 && recentRate < priorRate - 10) {
+        flags.push({ type: 'vendor_slipping', severity: 'warning', message: `${v.vendor_name} completion rate dropped from ${Math.round(priorRate)}% to ${Math.round(recentRate)}%` });
+      }
+    });
+    teamWorkload.rows.forEach(t => {
+      if (parseInt(t.open_count) > 8) {
+        flags.push({ type: 'overloaded', severity: 'warning', message: `${t.assignee} has ${t.open_count} open assignments` });
+      }
+      if (parseInt(t.overdue_count) > 3) {
+        flags.push({ type: 'overdue', severity: 'critical', message: `${t.assignee} has ${t.overdue_count} overdue field ops` });
+      }
+    });
+
     const s = stats.rows[0];
     res.json({
       summary: {
@@ -181,6 +309,15 @@ router.get('/report', async (req, res) => {
       byType: byType.rows.map(r => ({ type: r.type, count: parseInt(r.count), completed: parseInt(r.completed) })),
       byAssignee: byAssignee.rows.map(r => ({ assignee: r.assignee, count: parseInt(r.count), completed: parseInt(r.completed) })),
       byMonth: byMonth.rows.map(r => ({ month: r.month, count: parseInt(r.count), completed: parseInt(r.completed) })),
+      byVendor: byVendor.rows.map(r => ({ vendorId: r.vendor_id, vendorName: r.vendor_name, count: parseInt(r.count), completed: parseInt(r.completed), avgResponseHours: parseFloat(r.avg_response_hours) || null })),
+      byCategory: byCategory.rows.map(r => ({ category: r.category, count: parseInt(r.count), completed: parseInt(r.completed) })),
+      teamWorkload: teamWorkload.rows.map(r => ({ assignee: r.assignee, openCount: parseInt(r.open_count), completedThisMonth: parseInt(r.completed_this_month), overdueCount: parseInt(r.overdue_count), avgResponseHours: parseFloat(r.avg_response_hours) || null })),
+      vendorPerformance: vendorPerf.rows.map(r => {
+        const recentRate = parseInt(r.recent_total) > 0 ? Math.round((parseInt(r.recent_completed) / parseInt(r.recent_total)) * 100) : 0;
+        const priorRate = parseInt(r.prior_total) > 0 ? Math.round((parseInt(r.prior_completed) / parseInt(r.prior_total)) * 100) : 0;
+        return { vendorName: r.vendor_name, recentTotal: parseInt(r.recent_total), recentCompleted: parseInt(r.recent_completed), recentRate, priorRate, trend: recentRate >= priorRate ? 'up' : 'down', recentAvgHours: parseFloat(r.recent_avg_hours) || null, priorAvgHours: parseFloat(r.prior_avg_hours) || null };
+      }),
+      flags,
     });
   } catch (error) {
     logger.error('Field ops report error', { error: error.message });
@@ -189,7 +326,7 @@ router.get('/report', async (req, res) => {
 });
 
 // Delete field op
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', auditLog('Field op deleted', 'fieldops', 'warning'), async (req, res) => {
   try {
     await pool.query('DELETE FROM fieldops WHERE id = $1', [req.params.id]);
     res.json({ message: 'Field op deleted' });
@@ -232,7 +369,15 @@ function mapFieldOpsRow(row) {
     endTime: row.end_time,
     assignee: row.assignee,
     assignedTo: row.assignee,
-    vendor: row.assignee && !['Damon Alexander', 'Mike Chen', 'Lisa Park', 'Network Team (Jake Willis)'].some(n => row.assignee.includes(n)),
+    assignedType: row.assigned_type || 'internal',
+    vendorId: row.vendor_id,
+    vendorName: row.vendor_name,
+    vendorContact: row.vendor_contact,
+    isVendor: (row.assigned_type === 'vendor'),
+    roomId: row.room_id,
+    serviceCategory: row.service_category || 'project',
+    priority: row.priority || 'normal',
+    responseTimeHours: row.response_time_hours,
     status: row.status,
     notes: row.notes,
     estimatedDuration: row.estimated_duration,
@@ -280,7 +425,7 @@ router.get('/:id/notes', async (req, res) => {
 });
 
 // POST /api/fieldops/:id/notes
-router.post('/:id/notes', async (req, res) => {
+router.post('/:id/notes', auditLog('Field op note added', 'fieldops', 'info'), async (req, res) => {
   try {
     if (!notesTableReady) { await ensureNotesTable(); notesTableReady = true; }
     const { content } = req.body;
@@ -299,7 +444,7 @@ router.post('/:id/notes', async (req, res) => {
 });
 
 // DELETE /api/fieldops/notes/:id
-router.delete('/notes/:noteId', async (req, res) => {
+router.delete('/notes/:noteId', auditLog('Field op note deleted', 'fieldops', 'info'), async (req, res) => {
   try {
     await pool.query('DELETE FROM FieldOpNotes WHERE id = $1', [req.params.noteId]);
     res.json({ success: true });

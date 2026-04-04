@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const logger = require('../utils/logger');
+const { auditLog } = require('../middleware/audit');
 const { validate, body, param } = require('../middleware/validate');
 const router = express.Router();
 
@@ -126,6 +127,7 @@ router.post('/',
     body('name').trim().notEmpty().withMessage('Name is required').matches(/^[a-zA-Z0-9_]+$/).withMessage('Name must be alphanumeric with underscores'),
     body('displayName').trim().notEmpty().withMessage('Display name is required').isLength({ min: 1, max: 100 }).withMessage('Display name must be 1-100 characters')
   ]),
+  auditLog('Role created', 'admin', 'info'),
   async (req, res) => {
   try {
     if (!rolesTableReady) { await ensureRolesTable(); rolesTableReady = true; }
@@ -169,6 +171,7 @@ router.put('/:id',
     body('name').trim().notEmpty().withMessage('Name is required').matches(/^[a-zA-Z0-9_]+$/).withMessage('Name must be alphanumeric with underscores'),
     body('displayName').trim().notEmpty().withMessage('Display name is required').isLength({ min: 1, max: 100 }).withMessage('Display name must be 1-100 characters')
   ]),
+  auditLog('Role updated', 'admin', 'info'),
   async (req, res) => {
   try {
     if (!rolesTableReady) { await ensureRolesTable(); rolesTableReady = true; }
@@ -223,7 +226,7 @@ router.put('/:id',
 });
 
 // Delete role
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', auditLog('Role deleted', 'admin', 'warning'), async (req, res) => {
   try {
     if (!rolesTableReady) { await ensureRolesTable(); rolesTableReady = true; }
     const roleId = req.params.id;

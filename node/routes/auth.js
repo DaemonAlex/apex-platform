@@ -144,7 +144,7 @@ router.post('/login',
     const token = jwt.sign(
       { userId: user.id, email: user.email, name: user.name, role: user.role },
       process.env.JWT_SECRET,
-      { expiresIn: '24h' }
+      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
 
     // Parse preferences from database

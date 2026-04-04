@@ -105,7 +105,10 @@ router.get('/log',
     const offsetVal = parseInt(offset) || 0;
 
     const result = await pool.query(
-      `SELECT * FROM AuditLog${whereClause} ORDER BY timestamp DESC OFFSET $${paramIndex++} LIMIT $${paramIndex++}`,
+      `SELECT id, timestamp, "user", action, resource, details,
+              projectid AS "projectId", taskid AS "taskId",
+              category, severity, ipaddress AS "ipAddress", created_at
+       FROM AuditLog${whereClause} ORDER BY timestamp DESC OFFSET $${paramIndex++} LIMIT $${paramIndex++}`,
       [...params, offsetVal, limitVal]
     );
 

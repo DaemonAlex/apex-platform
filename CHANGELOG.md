@@ -5,6 +5,88 @@ All notable changes to the APEX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+---
+
+## [2026-03-31] - Cisco Control Hub Integration
+
+**Commit:** 1ee7338 on branch `main` - https://github.com/DaemonAlex/apex-platform.git
+
+**Category:** Integration / Architecture
+
+**Severity/Impact:** Medium
+
+**Summary:** Added a full Cisco Control Hub integration to the APEX platform, spanning a secure OAuth2 API client, a mock development environment, new authenticated Express routes, and a Naive UI Vue 3 dashboard component. Cisco credentials are sourced exclusively from environment variables. CORS and route registration in server.js were updated to support the new integration.
+
+---
+
+### Details
+
+#### 1. Backend - Cisco OAuth2 API Client (`node/routes/ciscoClient.js`) - NEW FILE
+
+- New module that authenticates with Cisco Control Hub using OAuth2 client credentials flow.
+- TLS hardened via Node.js `secureOptions` with `SSL_OP_NO_TLSv1` and `SSL_OP_NO_TLSv1_1` flags and `minVersion: 'TLSv1.2'` set on the HTTPS agent - TLS 1.0 and 1.1 are explicitly rejected.
+- Wraps four Cisco Control Hub API endpoint groups:
+  - Organization info
+  - Locations
+  - Devices (including status)
+  - Workspaces
+- All credentials sourced from environment variables: `CISCO_CLIENT_ID`, `CISCO_CLIENT_SECRET`, `CISCO_ORG_ID`. No secrets are committed to the repository.
+
+#### 2. Backend - Cisco Mock Environment (`node/routes/ciscoMockData.js`, `node/routes/ciscoMock.js`) - NEW FILES
+
+- Before state: no mock capability; live Cisco credentials were required for any local development touching Cisco data.
+- After state: setting the environment variable `CISCO_USE_MOCK=true` switches the Cisco client to return static fixture data from `ciscoMockData.js` via the mock driver in `ciscoMock.js`.
+- Allows local development and testing without live Cisco credentials or VPN access to the Control Hub.
+
+#### 3. Backend - Express Routes (`node/routes/cisco.js`) - NEW FILE
+
+- New route file mounting the Cisco API surface at `/api/cisco/*`.
+- All routes protected behind the existing `authenticateToken` middleware (JWT), consistent with every other protected route in the application.
+- Endpoint groups exposed: org info, locations, devices, workspaces.
+
+#### 4. Frontend - Cisco Dashboard Component (`client/src/CiscoApp.vue`) - NEW FILE
+
+- New Vue 3 + Naive UI dashboard component following the established section mount pattern used by all seven existing sections (Dashboard, Projects, Room Status, Field Ops, Reports, Admin, Profile).
+- Displays: organization overview, location summary, device status counts, workspace utilization.
+- Exposed globally as `window.ApexCisco` for mounting by the monolith shell via the existing `mountVueSection()` pattern.
+
+#### 5. Frontend - Mount Entry Point (`client/src/mount.ts`) - MODIFIED
+
+- Before state: exported `mountDashboard`, `mountProjects`, `mountRooms`, `mountFieldOps`, `mountReports`, `mountAdmin`, `mountProfile` (7 mount functions).
+- After state: adds `mountCisco` export and registers `window.ApexCisco` global, bringing the total to 8 mounted sections.
+- Vite library name (`ApexBundle`) is unchanged, preserving the fix from 2026-03-29 that prevents the IIFE return value from overwriting individual window globals.
+
+#### 6. Backend - Server Entry Point (`node/server.js`) - MODIFIED
+
+- Cisco routes (`node/routes/cisco.js`) registered with the Express app.
+- CORS `allowedMethods` updated: `PATCH` added to the list of allowed HTTP methods.
+- Before state (CORS methods): `GET, POST, PUT, DELETE, OPTIONS`
+- After state (CORS methods): `GET, POST, PUT, DELETE, PATCH, OPTIONS`
+
+---
+
+**Rationale:** The APEX platform manages AV/UC rooms, devices, and workspaces. Cisco Control Hub is the primary management plane for Cisco collaboration devices across those environments. Surfacing live org, device-status, and workspace-utilization data inside APEX eliminates the need to context-switch to the Control Hub portal for routine operational checks and supports future compliance and reporting workflows.
+
+**Dependencies/Side Effects:**
+- The NSSM `APEX-Backend` service must be restarted after deploying for new routes to register: `nssm restart APEX-Backend`.
+- The Vue bundle must be rebuilt and the cache-bust version parameter in `index.html` incremented before the Cisco dashboard is visible in the browser: `cd client && npm run build`, then bump `?v=N` on the IIFE script tag.
+- Three new environment variables must be present in the backend environment before the live client will function: `CISCO_CLIENT_ID`, `CISCO_CLIENT_SECRET`, `CISCO_ORG_ID`. Without them, set `CISCO_USE_MOCK=true` to use the mock environment.
+- The CORS `PATCH` addition is additive and does not affect existing route behavior.
+
+**Rollback Plan:**
+1. Revert commit 1ee7338: `git revert 1ee7338`.
+2. Rebuild the Vue bundle: `cd client && npm run build`.
+3. Increment the bundle cache-bust version in `index.html`.
+4. Restart the backend service: `nssm restart APEX-Backend`.
+5. Remove `CISCO_CLIENT_ID`, `CISCO_CLIENT_SECRET`, `CISCO_ORG_ID`, and `CISCO_USE_MOCK` from the environment if desired.
+
+**Related Entries:**
+- 2026-03-29 - Vue 3 Migration Complete: establishes the `window.ApexX` mount pattern and `mountVueSection()` integration this feature follows.
+- 2026-03-28 - Architectural Decision: Vue 3 Migration: defines the component, store, and mount patterns CiscoApp.vue conforms to.
+- 2026-03-29 - Dark Mode Toolbar Toggle / useTheme composable: CiscoApp.vue should import `useTheme()` from `client/src/composables/useTheme.ts` for consistent dark/light mode support (verify and add if not already present).
+
+---
+
 ## [7.0.0] - 2026-01-27
 
 ### Major Refactoring - ES Module Architecture

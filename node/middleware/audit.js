@@ -21,6 +21,8 @@ function auditLog(action, category = 'general', severity = 'info') {
       const ip = req.ip || req.connection?.remoteAddress || '127.0.0.1';
       const resource = req.originalUrl;
       const statusCode = res.statusCode;
+      const projectId = req.params.projectId || null;
+      const taskId = req.params.taskId || null;
 
       // Determine effective severity based on response
       const effectiveSeverity = statusCode >= 400 ? 'warning' : severity;
@@ -33,9 +35,8 @@ function auditLog(action, category = 'general', severity = 'info') {
 
       // Non-blocking write to database
       pool.query(`
-        INSERT INTO AuditLog (id, timestamp, "user", action, resource, details, category, severity, ipAddress, created_at)
-        SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW()
-        WHERE EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'auditlog')
+        INSERT INTO AuditLog (id, timestamp, "user", action, resource, details, projectId, taskId, category, severity, ipAddress, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
       `, [
         `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         new Date(),
@@ -43,6 +44,8 @@ function auditLog(action, category = 'general', severity = 'info') {
         `${action} [${statusCode}]`,
         resource,
         details,
+        projectId,
+        taskId,
         category,
         effectiveSeverity,
         ip

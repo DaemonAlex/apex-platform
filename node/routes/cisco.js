@@ -67,9 +67,92 @@ async function ensureCiscoTables() {
       synced_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cisco_room_checks (
+      id SERIAL PRIMARY KEY,
+      workspace_id VARCHAR(255) NOT NULL,
+      workspace_name VARCHAR(255),
+      checked_by VARCHAR(255),
+      status VARCHAR(20) DEFAULT 'pass',
+      notes TEXT,
+      snow_ticket VARCHAR(100),
+      checked_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cisco_room_schedules (
+      workspace_id VARCHAR(255) PRIMARY KEY,
+      workspace_name VARCHAR(255),
+      check_frequency VARCHAR(20) DEFAULT 'weekly',
+      check_day INT DEFAULT 1,
+      last_checked_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
 }
 
 let tablesReady = false;
+
+// Load persisted Cisco config from DB into process.env on startup
+async function loadCiscoConfigFromDB() {
+  try {
+    await pool.query(`CREATE TABLE IF NOT EXISTS AppConfig (key VARCHAR(100) PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ DEFAULT NOW())`);
+    const result = await pool.query(`SELECT key, value FROM AppConfig WHERE key IN ('cisco_personal_token', 'cisco_mock_mode')`);
+    for (const row of result.rows) {
+      const val = typeof row.value === 'string' ? row.value : JSON.stringify(row.value).replace(/^"|"$/g, '');
+      if (row.key === 'cisco_personal_token' && val && val !== 'null') process.env.CISCO_PERSONAL_TOKEN = val;
+      if (row.key === 'cisco_mock_mode') process.env.CISCO_MOCK_MODE = val === 'true' || val === true ? 'true' : 'false';
+    }
+  } catch (e) { /* non-fatal - fall back to .env values */ }
+}
+loadCiscoConfigFromDB();
+
+// GET /api/cisco/config - Read current integration config (token masked)
+router.get('/config', async (req, res) => {
+  try {
+    const token = process.env.CISCO_PERSONAL_TOKEN || '';
+    res.json({
+      mockMode: process.env.CISCO_MOCK_MODE === 'true',
+      hasToken: !!token,
+      tokenPreview: token ? token.slice(0, 8) + '...' + token.slice(-4) : null,
+      orgId: process.env.CISCO_ORG_ID || null,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/cisco/config - Update integration config (persists to DB + takes effect immediately)
+router.post('/config', async (req, res) => {
+  try {
+    const { personalToken, mockMode } = req.body;
+    await pool.query(`CREATE TABLE IF NOT EXISTS AppConfig (key VARCHAR(100) PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ DEFAULT NOW())`);
+
+    if (typeof mockMode === 'boolean') {
+      process.env.CISCO_MOCK_MODE = mockMode ? 'true' : 'false';
+      await pool.query(`INSERT INTO AppConfig (key, value) VALUES ('cisco_mock_mode', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [JSON.stringify(String(mockMode))]);
+    }
+
+    if (personalToken !== undefined) {
+      const token = (personalToken || '').trim();
+      process.env.CISCO_PERSONAL_TOKEN = token;
+      await pool.query(`INSERT INTO AppConfig (key, value) VALUES ('cisco_personal_token', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [JSON.stringify(token)]);
+    }
+
+    const current = process.env.CISCO_PERSONAL_TOKEN || '';
+    res.json({
+      ok: true,
+      mockMode: process.env.CISCO_MOCK_MODE === 'true',
+      hasToken: !!current,
+      tokenPreview: current ? current.slice(0, 8) + '...' + current.slice(-4) : null,
+      message: 'Configuration saved. Restart the backend to apply mock mode changes.',
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // GET /api/cisco/status - Check connection and return cache stats
 router.get('/status', async (req, res) => {
@@ -321,6 +404,71 @@ router.patch('/devices/:id/config', async (req, res) => {
   } catch (error) {
     logger.error('Error updating device config', { error: error.message, deviceId: req.params.id });
     res.status(500).json({ error: 'Failed to update device configuration' });
+  }
+});
+
+// GET /api/cisco/checks - Room check history
+router.get('/checks', async (req, res) => {
+  try {
+    if (!tablesReady) { await ensureCiscoTables(); tablesReady = true; }
+    const result = await pool.query(`SELECT * FROM cisco_room_checks ORDER BY checked_at DESC LIMIT 200`);
+    res.json({ checks: result.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/cisco/checks - Log a room check
+router.post('/checks', async (req, res) => {
+  try {
+    if (!tablesReady) { await ensureCiscoTables(); tablesReady = true; }
+    const { workspaceId, workspaceName, checkedBy, status, notes, snowTicket } = req.body;
+    if (!workspaceId) return res.status(400).json({ error: 'workspaceId is required' });
+    const result = await pool.query(
+      `INSERT INTO cisco_room_checks (workspace_id, workspace_name, checked_by, status, notes, snow_ticket)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [workspaceId, workspaceName || null, checkedBy || 'Manual', status || 'pass', notes || null, snowTicket || null]
+    );
+    await pool.query(
+      `UPDATE cisco_room_schedules SET last_checked_at = NOW(), updated_at = NOW() WHERE workspace_id = $1`,
+      [workspaceId]
+    );
+    res.json({ success: true, check: result.rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/cisco/schedules - All check schedules
+router.get('/schedules', async (req, res) => {
+  try {
+    if (!tablesReady) { await ensureCiscoTables(); tablesReady = true; }
+    const result = await pool.query(`SELECT * FROM cisco_room_schedules`);
+    res.json({ schedules: result.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/cisco/workspaces/:workspaceId/schedule - Set check schedule for a workspace
+router.put('/workspaces/:workspaceId/schedule', async (req, res) => {
+  try {
+    if (!tablesReady) { await ensureCiscoTables(); tablesReady = true; }
+    const { workspaceId } = req.params;
+    const { workspaceName, checkFrequency, checkDay } = req.body;
+    await pool.query(
+      `INSERT INTO cisco_room_schedules (workspace_id, workspace_name, check_frequency, check_day)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (workspace_id) DO UPDATE SET
+         workspace_name = COALESCE(EXCLUDED.workspace_name, cisco_room_schedules.workspace_name),
+         check_frequency = EXCLUDED.check_frequency,
+         check_day = EXCLUDED.check_day,
+         updated_at = NOW()`,
+      [workspaceId, workspaceName || null, checkFrequency || 'weekly', checkDay ?? 1]
+    );
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 

@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const logger = require('../utils/logger');
+const { auditLog } = require('../middleware/audit');
 const router = express.Router();
 
 // Auto-create tables
@@ -89,7 +90,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST /api/vendors - Create vendor
-router.post('/', async (req, res) => {
+router.post('/', auditLog('Vendor created', 'vendor', 'info'), async (req, res) => {
   try {
     if (!tablesReady) { await ensureVendorTables(); tablesReady = true; }
     const { name, type, category, website, address, notes, contacts } = req.body;
@@ -108,7 +109,7 @@ router.post('/', async (req, res) => {
 });
 
 // PUT /api/vendors/:id - Update vendor
-router.put('/:id', async (req, res) => {
+router.put('/:id', auditLog('Vendor updated', 'vendor', 'info'), async (req, res) => {
   try {
     const { name, type, category, website, address, notes, contacts } = req.body;
     const result = await pool.query(
@@ -128,7 +129,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE /api/vendors/:id - Soft delete
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', auditLog('Vendor deleted', 'vendor', 'warning'), async (req, res) => {
   try {
     await pool.query('UPDATE Vendors SET deleted_at = NOW() WHERE id = $1', [req.params.id]);
     res.json({ success: true });
@@ -141,7 +142,7 @@ router.delete('/:id', async (req, res) => {
 // ==================== ASSIGNMENTS ====================
 
 // POST /api/vendors/:id/assign - Assign vendor to project or room
-router.post('/:id/assign', async (req, res) => {
+router.post('/:id/assign', auditLog('Vendor assigned', 'vendor', 'info'), async (req, res) => {
   try {
     const { entityType, entityId, role, notes } = req.body;
     if (!entityType || !entityId) return res.status(400).json({ error: 'entityType and entityId required' });
@@ -158,7 +159,7 @@ router.post('/:id/assign', async (req, res) => {
 });
 
 // DELETE /api/vendors/assignments/:id - Remove assignment
-router.delete('/assignments/:id', async (req, res) => {
+router.delete('/assignments/:id', auditLog('Vendor assignment removed', 'vendor', 'info'), async (req, res) => {
   try {
     await pool.query('DELETE FROM VendorAssignments WHERE id = $1', [req.params.id]);
     res.json({ success: true });

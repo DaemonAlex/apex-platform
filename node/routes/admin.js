@@ -367,7 +367,7 @@ router.post('/load-full-wintrust-data', auditLog('Admin: load Wintrust data', 'a
 });
 
 // Add time tracking columns to database
-router.post('/add-time-tracking', async (req, res) => {
+router.post('/add-time-tracking', auditLog('Admin: add time tracking columns', 'admin', 'info'), async (req, res) => {
   try {
     // Add time tracking columns using ADD COLUMN IF NOT EXISTS
     await pool.query(`
@@ -388,7 +388,7 @@ router.post('/add-time-tracking', async (req, res) => {
 });
 
 // Update projects with time tracking data
-router.post('/update-time-tracking', async (req, res) => {
+router.post('/update-time-tracking', auditLog('Admin: update time tracking data', 'admin', 'info'), async (req, res) => {
   try {
     // Get all projects
     const projects = await pool.query('SELECT * FROM Projects');
@@ -487,7 +487,7 @@ router.post('/update-time-tracking', async (req, res) => {
 });
 
 // Add RAG status columns and calculate RAG status for all projects
-router.post('/add-rag-status', async (req, res) => {
+router.post('/add-rag-status', auditLog('Admin: add RAG status', 'admin', 'info'), async (req, res) => {
   try {
     logger.info('🚦 Adding RAG status calculations...');
 
@@ -650,7 +650,7 @@ router.post('/add-rag-status', async (req, res) => {
 });
 
 // Reload clean project data
-router.post('/reload-projects', async (req, res) => {
+router.post('/reload-projects', auditLog('Admin: reload projects', 'admin', 'info'), async (req, res) => {
   try {
     // Get only legitimate project records
     const result = await pool.query(`
@@ -789,7 +789,7 @@ router.put('/db/config',
 });
 
 // POST /api/admin/db/test - Test database connection
-router.post('/db/test', async (req, res) => {
+router.post('/db/test', auditLog('Admin: tested DB connection', 'admin', 'info'), async (req, res) => {
   try {
     const { dialect, host, port, database, user, password } = req.body;
     if (!host || !database || !user) {

@@ -9,7 +9,7 @@ import DashboardApp from './DashboardApp.vue';
 import AdminApp from './AdminApp.vue';
 import ProfileApp from './ProfileApp.vue';
 import VendorsApp from './VendorsApp.vue';
-import CiscoApp from './CiscoApp.vue';
+import InfrastructureApp from './InfrastructureApp.vue';
 import { setToken } from './composables/useApi';
 
 function createVueApp(component: any, el: string | HTMLElement, options: { token: string; userName?: string; props?: Record<string, any> }) {
@@ -66,7 +66,7 @@ export function mountVendors(el: string | HTMLElement, options: { token: string;
 }
 
 export function mountCisco(el: string | HTMLElement, options: { token: string; userName?: string }) {
-  return createVueApp(CiscoApp, el, options);
+  return createVueApp(InfrastructureApp, el, options);
 }
 
 // Expose globally for the monolith to call

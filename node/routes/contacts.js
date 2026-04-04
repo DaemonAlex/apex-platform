@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const logger = require('../utils/logger');
+const { auditLog } = require('../middleware/audit');
 const router = express.Router();
 
 // Contact types: internal, vendor, gc, architect, oac_rep, consultant, client
@@ -89,7 +90,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST /api/contacts - Create contact
-router.post('/', async (req, res) => {
+router.post('/', auditLog('Contact created', 'project', 'info'), async (req, res) => {
   try {
     const { name, organization, role, email, phone, type, notes } = req.body;
     if (!name) return res.status(400).json({ error: 'Name is required' });
@@ -108,7 +109,7 @@ router.post('/', async (req, res) => {
 });
 
 // PUT /api/contacts/:id - Update contact
-router.put('/:id', async (req, res) => {
+router.put('/:id', auditLog('Contact updated', 'project', 'info'), async (req, res) => {
   try {
     const { name, organization, role, email, phone, type, notes } = req.body;
     await pool.query(
@@ -127,7 +128,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE /api/contacts/:id - Delete contact
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', auditLog('Contact deleted', 'project', 'warning'), async (req, res) => {
   try {
     await pool.query('DELETE FROM Contacts WHERE id = $1', [req.params.id]);
     res.json({ success: true });
@@ -167,7 +168,7 @@ router.get('/assignments/project/:projectId', async (req, res) => {
 });
 
 // POST /api/contacts/assignments - Assign contact to project
-router.post('/assignments', async (req, res) => {
+router.post('/assignments', auditLog('Contact assigned to project', 'project', 'info'), async (req, res) => {
   try {
     const { projectId, contactId, role, startDate, endDate, notes } = req.body;
     if (!projectId || !contactId) return res.status(400).json({ error: 'projectId and contactId are required' });
@@ -185,7 +186,7 @@ router.post('/assignments', async (req, res) => {
 });
 
 // PUT /api/contacts/assignments/:id - Update assignment
-router.put('/assignments/:id', async (req, res) => {
+router.put('/assignments/:id', auditLog('Contact assignment updated', 'project', 'info'), async (req, res) => {
   try {
     const { role, startDate, endDate, isActive, notes } = req.body;
     await pool.query(
@@ -203,7 +204,7 @@ router.put('/assignments/:id', async (req, res) => {
 });
 
 // DELETE /api/contacts/assignments/:id - Remove assignment
-router.delete('/assignments/:id', async (req, res) => {
+router.delete('/assignments/:id', auditLog('Contact assignment removed', 'project', 'info'), async (req, res) => {
   try {
     await pool.query('DELETE FROM ProjectAssignments WHERE id = $1', [req.params.id]);
     res.json({ success: true });

@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const logger = require('../utils/logger');
+const { auditLog } = require('../middleware/audit');
 const { validate, body } = require('../middleware/validate');
 const router = express.Router();
 
@@ -288,6 +289,7 @@ router.post('/',
     body('room.name').optional().trim().isLength({ min: 1, max: 255 }).withMessage('Room name must be 1-255 characters'),
     body('room.scheduleDay').optional().isInt({ min: 0, max: 6 }).withMessage('Schedule day must be 0-6')
   ]),
+  auditLog('Room created or check submitted', 'room', 'info'),
   async (req, res) => {
   try {
     const { room, checkData } = req.body;
@@ -392,7 +394,7 @@ router.get('/:roomId/history', async (req, res) => {
 });
 
 // PUT /api/room-status/:roomId - Update a room
-router.put('/:roomId', async (req, res) => {
+router.put('/:roomId', auditLog('Room updated', 'room', 'info'), async (req, res) => {
   try {
     const { roomId } = req.params;
     const { name, roomType, capacity, locationId, floorId, standardId, checkFrequency, checkDay } = req.body;
@@ -442,7 +444,7 @@ router.put('/:roomId', async (req, res) => {
 });
 
 // DELETE /api/room-status/:roomId - Soft delete a room (keep all historical data)
-router.delete('/:roomId', async (req, res) => {
+router.delete('/:roomId', auditLog('Room deleted', 'room', 'warning'), async (req, res) => {
   try {
     const { roomId } = req.params;
 
@@ -494,7 +496,7 @@ router.get('/locations/list', async (req, res) => {
 });
 
 // POST /api/room-status/locations - Create a location
-router.post('/locations', async (req, res) => {
+router.post('/locations', auditLog('Location created', 'room', 'info'), async (req, res) => {
   try {
     if (!tablesEnsured) { await ensureRoomTables(); tablesEnsured = true; }
     const { name, address, city, state, zip, contactName, contactPhone, contactEmail, notes } = req.body;
@@ -513,7 +515,7 @@ router.post('/locations', async (req, res) => {
 });
 
 // PUT /api/room-status/locations/:id - Update a location
-router.put('/locations/:id', async (req, res) => {
+router.put('/locations/:id', auditLog('Location updated', 'room', 'info'), async (req, res) => {
   try {
     const { name, address, city, state, zip, contactName, contactPhone, contactEmail, notes } = req.body;
     await pool.query(
@@ -529,7 +531,7 @@ router.put('/locations/:id', async (req, res) => {
 });
 
 // DELETE /api/room-status/locations/:id - Soft delete a location
-router.delete('/locations/:id', async (req, res) => {
+router.delete('/locations/:id', auditLog('Location deleted', 'room', 'warning'), async (req, res) => {
   try {
     await pool.query('UPDATE Locations SET deleted_at = NOW() WHERE id = $1', [req.params.id]);
     res.json({ success: true });
@@ -568,7 +570,7 @@ router.get('/locations/:locationId/floors', async (req, res) => {
 });
 
 // POST /api/room-status/locations/:locationId/floors - Add a floor
-router.post('/locations/:locationId/floors', async (req, res) => {
+router.post('/locations/:locationId/floors', auditLog('Floor created', 'room', 'info'), async (req, res) => {
   try {
     const { name, sortOrder, notes } = req.body;
     if (!name) return res.status(400).json({ error: 'Floor name is required' });
@@ -584,7 +586,7 @@ router.post('/locations/:locationId/floors', async (req, res) => {
 });
 
 // DELETE /api/room-status/floors/:id - Delete a floor
-router.delete('/floors/:id', async (req, res) => {
+router.delete('/floors/:id', auditLog('Floor deleted', 'room', 'warning'), async (req, res) => {
   try {
     // Unlink rooms from this floor
     await pool.query('UPDATE Rooms SET floor_id = NULL WHERE floor_id = $1', [req.params.id]);
@@ -626,7 +628,7 @@ router.get('/:roomId/equipment', async (req, res) => {
 });
 
 // POST /api/room-status/:roomId/equipment - Add equipment to a room
-router.post('/:roomId/equipment', async (req, res) => {
+router.post('/:roomId/equipment', auditLog('Equipment added', 'room', 'info'), async (req, res) => {
   try {
     const { category, make, model, serialNumber, firmwareVersion, installDate, warrantyEnd, status, notes } = req.body;
     const result = await pool.query(`
@@ -643,7 +645,7 @@ router.post('/:roomId/equipment', async (req, res) => {
 });
 
 // PUT /api/room-status/equipment/:id - Update equipment
-router.put('/equipment/:id', async (req, res) => {
+router.put('/equipment/:id', auditLog('Equipment updated', 'room', 'info'), async (req, res) => {
   try {
     const { category, make, model, serialNumber, firmwareVersion, installDate, warrantyEnd, status, notes } = req.body;
     await pool.query(`
@@ -662,7 +664,7 @@ router.put('/equipment/:id', async (req, res) => {
 });
 
 // DELETE /api/room-status/equipment/:id - Remove equipment
-router.delete('/equipment/:id', async (req, res) => {
+router.delete('/equipment/:id', auditLog('Equipment deleted', 'room', 'warning'), async (req, res) => {
   try {
     await pool.query('DELETE FROM RoomEquipment WHERE id = $1', [req.params.id]);
     res.json({ success: true });
@@ -693,7 +695,7 @@ router.get('/standards/list', async (req, res) => {
 });
 
 // POST /api/room-status/standards - Create a room standard
-router.post('/standards', async (req, res) => {
+router.post('/standards', auditLog('Room standard created', 'room', 'info'), async (req, res) => {
   try {
     const { name, description, requiredEquipment } = req.body;
     const result = await pool.query(
@@ -708,7 +710,7 @@ router.post('/standards', async (req, res) => {
 });
 
 // PUT /api/room-status/standards/:id - Update a room standard
-router.put('/standards/:id', async (req, res) => {
+router.put('/standards/:id', auditLog('Room standard updated', 'room', 'info'), async (req, res) => {
   try {
     const { name, description, requiredEquipment } = req.body;
     await pool.query(
@@ -723,7 +725,7 @@ router.put('/standards/:id', async (req, res) => {
 });
 
 // DELETE /api/room-status/standards/:id - Delete a room standard
-router.delete('/standards/:id', async (req, res) => {
+router.delete('/standards/:id', auditLog('Room standard deleted', 'room', 'warning'), async (req, res) => {
   try {
     await pool.query('UPDATE Rooms SET standard_id = NULL WHERE standard_id = $1', [req.params.id]);
     await pool.query('DELETE FROM RoomStandards WHERE id = $1', [req.params.id]);
@@ -853,7 +855,7 @@ router.get('/:roomId/tech', async (req, res) => {
 });
 
 // PUT /api/room-status/:roomId/tech - Create or update tech details
-router.put('/:roomId/tech', async (req, res) => {
+router.put('/:roomId/tech', auditLog('Room tech details updated', 'room', 'info'), async (req, res) => {
   try {
     const { roomId } = req.params;
     const {
@@ -969,7 +971,7 @@ router.get('/documents/:entityType/:entityId', async (req, res) => {
 });
 
 // POST /api/room-status/documents/:entityType/:entityId - Upload document
-router.post('/documents/:entityType/:entityId', docUpload.single('file'), async (req, res) => {
+router.post('/documents/:entityType/:entityId', docUpload.single('file'), auditLog('Document uploaded', 'room', 'info'), async (req, res) => {
   try {
     const { entityType, entityId } = req.params;
     const { docType, description } = req.body;
@@ -1009,7 +1011,7 @@ router.get('/documents/download/:id', async (req, res) => {
 });
 
 // DELETE /api/room-status/documents/:id - Delete a document
-router.delete('/documents/:id', async (req, res) => {
+router.delete('/documents/:id', auditLog('Document deleted', 'room', 'warning'), async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM Documents WHERE id = $1', [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Document not found' });

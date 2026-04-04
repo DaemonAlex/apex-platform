@@ -16,8 +16,9 @@
     <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/bold/style.css" />
     <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css" />
 
-    <!-- Vue Room Status Module (built from client/) -->
-    <script src="/vue/apex-rooms.iife.js?v=75" defer></script>
+    <!-- Vue Bundle (built from client/) -->
+    <link rel="stylesheet" href="/vue/apex-rooms.css?v=90" />
+    <script src="/vue/apex-rooms.iife.js?v=90" defer></script>
 
     <!-- External Libraries from CDN -->
     <!-- CDN libraries removed: XLSX, jsPDF, Sortable, Chart.js, DOMPurify - no longer needed, Vue apps use bundled deps -->
@@ -4808,11 +4809,8 @@
                 <button class="nav-btn" onclick="showView('fieldops')" id="navFieldops">
                     <i class="ph ph-wrench"></i> Field Ops
                 </button>
-                <button class="nav-btn" onclick="showView('roomstatus')" id="navRoomstatus">
-                    <i class="ph ph-map-pin"></i> Room Status
-                </button>
-                <button class="nav-btn" onclick="showView('vendors')" id="navVendors">
-                    <i class="ph ph-handshake"></i> Vendors
+                <button class="nav-btn" onclick="showView('cisco')" id="navCisco">
+                    <i class="ph ph-buildings"></i> Infrastructure
                 </button>
                 <button class="nav-btn" onclick="showView('reports')" id="navReports">
                     <i class="ph ph-chart-line-up"></i> Reports
@@ -5202,6 +5200,13 @@
                         <i class="ph ph-spinner" style="font-size:2rem; animation:spin 1s linear infinite;"></i>
                         <p>Loading Reports...</p>
                     </div>
+                </div>
+            </div>
+
+            <!-- Control Hub View (Vue 3) -->
+            <div id="ciscoView" class="content-view">
+                <div id="ciscoVueMount" style="min-height: 400px;">
+                    <div style="text-align:center; padding:2rem; color:var(--gray-500);">Loading Control Hub...</div>
                 </div>
             </div>
 
@@ -5781,6 +5786,16 @@
                     title: 'Vendors',
                     subtitle: 'Manage vendors and contacts',
                     nav: ''
+                },
+                cisco: {
+                    title: 'Infrastructure',
+                    subtitle: 'Devices, spaces, and room health',
+                    nav: ''
+                },
+                profile: {
+                    title: 'Profile',
+                    subtitle: 'Account settings',
+                    nav: ''
                 }
             };
 
@@ -5824,6 +5839,9 @@
                     break;
                 case 'profile':
                     mountVueSection('profileVueMount', 'ApexProfile');
+                    break;
+                case 'cisco':
+                    mountVueSection('ciscoVueMount', 'ApexCisco');
                     break;
                 case 'vendors':
                     mountVueSection('vendorsVueMount', 'ApexVendors');

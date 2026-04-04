@@ -1,5 +1,6 @@
 const express = require('express');
 const { pool } = require('../db');
+const { auditLog } = require('../middleware/audit');
 const router = express.Router();
 
 // Ensure AppConfig table exists
@@ -38,7 +39,7 @@ router.get('/business-lines', async (req, res) => {
 });
 
 // PUT /api/settings/business-lines - Update business lines
-router.put('/business-lines', async (req, res) => {
+router.put('/business-lines', auditLog('Business lines updated', 'admin', 'info'), async (req, res) => {
   try {
     const { businessLines } = req.body;
     if (!Array.isArray(businessLines)) return res.status(400).json({ error: 'businessLines must be an array' });
@@ -64,7 +65,7 @@ router.get('/project-prefix', async (req, res) => {
 });
 
 // PUT /api/settings/project-prefix - Update prefix
-router.put('/project-prefix', async (req, res) => {
+router.put('/project-prefix', auditLog('Project prefix updated', 'admin', 'info'), async (req, res) => {
   try {
     const { prefix } = req.body;
     if (!prefix || typeof prefix !== 'string') return res.status(400).json({ error: 'prefix is required' });
@@ -79,7 +80,7 @@ router.put('/project-prefix', async (req, res) => {
 });
 
 // PUT /api/settings/:key - Generic config update
-router.put('/:key', async (req, res) => {
+router.put('/:key', auditLog('Setting updated', 'admin', 'info'), async (req, res) => {
   try {
     const { value } = req.body;
     await pool.query(

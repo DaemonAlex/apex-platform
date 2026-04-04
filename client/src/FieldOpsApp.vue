@@ -5,11 +5,18 @@ import {
   NTabs, NTabPane, NCard, NGrid, NGi, NStatistic,
   NDataTable, NTag, NEmpty, NSpin, NSpace, NSelect, NInput,
   NButtonGroup, NButton, NCalendar,
-  NModal, NForm, NFormItem, NProgress, createDiscreteApi,
+  NModal, NForm, NFormItem, NProgress, NRadioGroup, NRadioButton, createDiscreteApi,
 } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
 import { useTheme } from './composables/useTheme';
+import VChart from 'vue-echarts';
+import { use } from 'echarts/core';
+import { LineChart, BarChart } from 'echarts/charts';
+import { TitleComponent, TooltipComponent, LegendComponent, GridComponent } from 'echarts/components';
+import { CanvasRenderer } from 'echarts/renderers';
 import { h } from 'vue';
+
+use([LineChart, BarChart, TitleComponent, TooltipComponent, LegendComponent, GridComponent, CanvasRenderer]);
 
 const loading = ref(true);
 const activeTab = ref('all');
@@ -87,7 +94,20 @@ const columns: DataTableColumns<any> = [
   },
   { title: 'Type', key: 'type', width: 120, sorter: 'default', render: (row) => row.type || row.workType || '-' },
   { title: 'Location', key: 'location', width: 150, render: (row) => row.location || '-' },
-  { title: 'Assignee', key: 'assignee', width: 130, render: (row) => row.assignee || row.assignedTo || '-' },
+  {
+    title: 'Assigned To', key: 'assignee', width: 160, sorter: 'default',
+    render: (row) => {
+      const name = row.assignee || row.assignedTo || '-';
+      const isVendor = row.assignedType === 'vendor' || row.isVendor;
+      return h('div', { style: 'display:flex;align-items:center;gap:6px;' }, [
+        h('i', { class: isVendor ? 'ph ph-buildings' : 'ph ph-user', style: `font-size:0.9rem;color:${isVendor ? '#8b5cf6' : '#64748b'};` }),
+        h('div', {}, [
+          h('div', { style: 'font-size:0.85rem;' }, isVendor ? (row.vendorName || name) : name),
+          isVendor && row.vendorContact ? h('div', { style: 'font-size:0.72rem;color:#94a3b8;' }, row.vendorContact) : null,
+        ].filter(Boolean)),
+      ]);
+    },
+  },
   {
     title: 'Date', key: 'date', width: 100, sorter: 'default',
     render: (row) => {
@@ -128,13 +148,28 @@ function getOpsForDate(timestamp: number) {
 onMounted(load);
 
 const userOptions = ref<{ label: string; value: string }[]>([]);
+const projectOptions = ref<{ label: string; value: string; raw: any }[]>([]);
+const vendorOptions = ref<{ label: string; value: number; raw: any }[]>([]);
+const roomOptions = ref<{ label: string; value: number; raw: any }[]>([]);
+
 (async () => {
   try {
     const tk = token();
     if (!tk) return;
-    const res = await fetch('/api/users', { headers: { Authorization: 'Bearer ' + tk } });
-    const data = await res.json();
-    userOptions.value = (data.users || []).filter((u: any) => u.email !== 'service@apex.local').map((u: any) => ({ label: u.name, value: u.name }));
+    const headers = { Authorization: 'Bearer ' + tk };
+    const [usersRes, projRes, vendRes, roomRes] = await Promise.all([
+      fetch('/api/users', { headers }),
+      fetch('/api/projects?summary=true&limit=200', { headers }),
+      fetch('/api/vendors', { headers }),
+      fetch('/api/room-status', { headers }),
+    ]);
+    const [usersData, projData, vendData, roomData] = await Promise.all([
+      usersRes.json(), projRes.json(), vendRes.json(), roomRes.json(),
+    ]);
+    userOptions.value = (usersData.users || []).filter((u: any) => u.email !== 'service@apex.local').map((u: any) => ({ label: u.name, value: u.name }));
+    projectOptions.value = (projData.projects || []).filter((p: any) => p.status !== 'cancelled').map((p: any) => ({ label: `${p.name}${p.status ? ' (' + p.status + ')' : ''}`, value: String(p.id), raw: p }));
+    vendorOptions.value = (vendData.vendors || vendData || []).map((v: any) => ({ label: v.name, value: v.id, raw: v }));
+    roomOptions.value = (roomData.rooms || []).map((r: any) => ({ label: `${r.name}${r.location ? ' - ' + r.location : ''}`, value: r.id, raw: r }));
   } catch {}
 })();
 
@@ -147,10 +182,59 @@ const showModal = ref(false);
 const editingId = ref<number | null>(null);
 const saving = ref(false);
 const form = ref({
-  taskName: '', projectName: '', type: 'Installation', location: '',
+  taskName: '', projectName: '', projectId: '' as string, type: 'Installation', location: '',
   scheduledDate: '', startTime: '9:00 AM', endTime: '5:00 PM',
   assignee: '', notes: '', status: 'scheduled',
+  serviceCategory: 'project', assignedType: 'internal' as string,
+  vendorId: null as number | null, vendorContact: '', vendorName: '',
+  roomId: null as number | null, priority: 'normal',
 });
+
+const vendorContactOptions = computed(() => {
+  if (!form.value.vendorId) return [];
+  const vendor = vendorOptions.value.find(v => v.value === form.value.vendorId);
+  if (!vendor?.raw?.contacts) return [];
+  const contacts = typeof vendor.raw.contacts === 'string' ? JSON.parse(vendor.raw.contacts) : vendor.raw.contacts;
+  return (contacts || []).map((c: any) => ({ label: c.name || c.contactName || c.email || 'Contact', value: c.name || c.contactName || c.email || '' }));
+});
+
+const serviceCategoryOptions = [
+  { label: 'Project Work', value: 'project' },
+  { label: 'Room Check', value: 'room_check' },
+  { label: 'Service Call', value: 'service_call' },
+  { label: 'Maintenance', value: 'maintenance' },
+];
+
+const priorityOptions = [
+  { label: 'Low', value: 'low' },
+  { label: 'Normal', value: 'normal' },
+  { label: 'High', value: 'high' },
+  { label: 'Urgent', value: 'urgent' },
+];
+
+function onProjectSelect(projectId: string) {
+  form.value.projectId = projectId;
+  const proj = projectOptions.value.find(p => p.value === projectId);
+  if (proj?.raw) {
+    form.value.projectName = proj.raw.name;
+    if (proj.raw.siteLocation && !form.value.location) form.value.location = proj.raw.siteLocation;
+  }
+}
+
+function onVendorSelect(vendorId: number) {
+  form.value.vendorId = vendorId;
+  form.value.vendorContact = '';
+  const vendor = vendorOptions.value.find(v => v.value === vendorId);
+  if (vendor) form.value.vendorName = vendor.raw.name;
+}
+
+function onRoomSelect(roomId: number) {
+  form.value.roomId = roomId;
+  const room = roomOptions.value.find(r => r.value === roomId);
+  if (room?.raw) {
+    if (!form.value.location) form.value.location = [room.raw.location, room.raw.floor, room.raw.name].filter(Boolean).join(' - ');
+  }
+}
 
 // Report data
 const report = ref<any>(null);
@@ -209,7 +293,7 @@ async function deleteNote(noteId: number) {
 
 function openCreate() {
   editingId.value = null;
-  form.value = { taskName: '', projectName: '', type: 'Installation', location: '', scheduledDate: '', startTime: '9:00 AM', endTime: '5:00 PM', assignee: '', notes: '', status: 'scheduled' };
+  form.value = { taskName: '', projectName: '', projectId: '', type: 'Installation', location: '', scheduledDate: '', startTime: '9:00 AM', endTime: '5:00 PM', assignee: '', notes: '', status: 'scheduled', serviceCategory: 'project', assignedType: 'internal', vendorId: null, vendorContact: '', vendorName: '', roomId: null, priority: 'normal' };
   showModal.value = true;
 }
 
@@ -218,6 +302,7 @@ function openEdit(op: any) {
   form.value = {
     taskName: op.taskName || op.task_name || '',
     projectName: op.projectName || op.project_name || '',
+    projectId: op.projectId || op.project_id || '',
     type: op.type || op.workType || 'Installation',
     location: op.location || '',
     scheduledDate: (op.date || op.scheduledDate || op.scheduled_date || '').split('T')[0],
@@ -226,6 +311,13 @@ function openEdit(op: any) {
     assignee: op.assignee || op.assignedTo || '',
     notes: op.notes || '',
     status: op.status || 'scheduled',
+    serviceCategory: op.serviceCategory || 'project',
+    assignedType: op.assignedType || 'internal',
+    vendorId: op.vendorId || null,
+    vendorContact: op.vendorContact || '',
+    vendorName: op.vendorName || '',
+    roomId: op.roomId || null,
+    priority: op.priority || 'normal',
   };
   showModal.value = true;
 }
@@ -406,14 +498,81 @@ const statusEditOptions = [
     <template v-if="activeTab === 'reports'">
       <NSpin :show="reportLoading">
         <div v-if="report">
-          <NGrid :x-gap="12" :y-gap="12" :cols="4" style="margin-bottom:20px;">
+          <!-- Flags/Alerts -->
+          <div v-if="report.flags?.length" style="margin-bottom:16px;display:flex;flex-direction:column;gap:6px;">
+            <div v-for="(flag, idx) in report.flags" :key="idx"
+              :style="{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', borderRadius: '6px', borderLeft: '3px solid ' + (flag.severity === 'critical' ? '#ef4444' : '#f59e0b'), background: flag.severity === 'critical' ? 'rgba(239,68,68,0.06)' : 'rgba(245,158,11,0.06)' }">
+              <i :class="'ph ' + (flag.type === 'vendor_slipping' ? 'ph-trend-down' : flag.type === 'overloaded' ? 'ph-warning' : 'ph-clock')"
+                :style="{ fontSize: '1.2rem', color: flag.severity === 'critical' ? '#ef4444' : '#f59e0b' }" />
+              <span style="font-size:0.9rem;">{{ flag.message }}</span>
+            </div>
+          </div>
+
+          <!-- Summary stats -->
+          <NGrid :x-gap="12" :y-gap="12" :cols="5" style="margin-bottom:20px;">
             <NGi><NCard size="small" style="text-align:center;"><NStatistic label="Completion Rate" :value="report.summary?.completionRate + '%'" /></NCard></NGi>
             <NGi><NCard size="small" style="text-align:center;"><NStatistic label="Total Work Orders" :value="report.summary?.total" /></NCard></NGi>
             <NGi><NCard size="small" style="text-align:center;"><NStatistic label="Completed" :value="report.summary?.completed"><template #prefix><span style="color:#22c55e;">&#9679;</span></template></NStatistic></NCard></NGi>
             <NGi><NCard size="small" style="text-align:center;"><NStatistic label="Open" :value="(report.summary?.scheduled || 0) + (report.summary?.inProgress || 0) + (report.summary?.pending || 0)"><template #prefix><span style="color:#0ea5e9;">&#9679;</span></template></NStatistic></NCard></NGi>
+            <NGi><NCard size="small" style="text-align:center;"><NStatistic label="Cancelled" :value="report.summary?.cancelled || 0"><template #prefix><span style="color:#64748b;">&#9679;</span></template></NStatistic></NCard></NGi>
           </NGrid>
 
-          <NGrid :x-gap="16" :y-gap="16" :cols="2">
+          <!-- Vendor Performance + Team Workload -->
+          <NGrid :x-gap="16" :y-gap="16" :cols="2" style="margin-bottom:20px;">
+            <NGi>
+              <NCard size="small" title="Vendor Performance">
+                <template #header-extra><NTag size="tiny" :bordered="false" type="info">Last 90 days</NTag></template>
+                <div v-if="report.vendorPerformance?.length">
+                  <div v-for="v in report.vendorPerformance" :key="v.vendorName"
+                    style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+                    <div>
+                      <div style="font-weight:500;display:flex;align-items:center;gap:6px;">
+                        <i class="ph ph-buildings" style="color:#8b5cf6;" />
+                        {{ v.vendorName }}
+                      </div>
+                      <div style="font-size:0.78rem;color:#94a3b8;">{{ v.recentCompleted }}/{{ v.recentTotal }} completed{{ v.recentAvgHours ? ' - avg ' + v.recentAvgHours + 'h' : '' }}</div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                      <NProgress type="circle" :percentage="v.recentRate" :stroke-width="6" :color="v.recentRate >= 80 ? '#22c55e' : v.recentRate >= 50 ? '#f59e0b' : '#ef4444'" style="width:36px;height:36px;" :show-indicator="false" />
+                      <div style="text-align:right;min-width:40px;">
+                        <div style="font-weight:700;font-size:0.9rem;">{{ v.recentRate }}%</div>
+                        <div style="font-size:0.7rem;" :style="{ color: v.trend === 'up' ? '#22c55e' : '#ef4444' }">
+                          <i :class="'ph ph-trend-' + v.trend" /> vs {{ v.priorRate }}%
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <NEmpty v-else description="No vendor data yet" size="small" />
+              </NCard>
+            </NGi>
+            <NGi>
+              <NCard size="small" title="Team Workload">
+                <div v-if="report.teamWorkload?.length">
+                  <div v-for="t in report.teamWorkload" :key="t.assignee"
+                    style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+                    <div>
+                      <div style="font-weight:500;display:flex;align-items:center;gap:6px;">
+                        <i class="ph ph-user" style="color:#0ea5e9;" />
+                        {{ t.assignee }}
+                        <NTag v-if="t.openCount > 8" size="tiny" type="error" :bordered="false">Overloaded</NTag>
+                      </div>
+                      <div style="font-size:0.78rem;color:#94a3b8;">{{ t.completedThisMonth }} completed this month{{ t.avgResponseHours ? ' - avg ' + t.avgResponseHours + 'h' : '' }}</div>
+                    </div>
+                    <div style="text-align:right;">
+                      <div style="font-weight:700;font-size:1rem;">{{ t.openCount }}</div>
+                      <div style="font-size:0.72rem;color:#94a3b8;">open</div>
+                      <div v-if="t.overdueCount > 0" style="font-size:0.72rem;color:#ef4444;">{{ t.overdueCount }} overdue</div>
+                    </div>
+                  </div>
+                </div>
+                <NEmpty v-else description="No team data yet" size="small" />
+              </NCard>
+            </NGi>
+          </NGrid>
+
+          <!-- By Type + By Category -->
+          <NGrid :x-gap="16" :y-gap="16" :cols="2" style="margin-bottom:20px;">
             <NGi>
               <NCard size="small" title="By Type">
                 <div v-for="t in report.byType" :key="t.type" style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
@@ -426,17 +585,46 @@ const statusEditOptions = [
               </NCard>
             </NGi>
             <NGi>
-              <NCard size="small" title="By Technician">
-                <div v-for="a in report.byAssignee" :key="a.assignee" style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
-                  <span style="font-weight:500;">{{ a.assignee }}</span>
+              <NCard size="small" title="By Service Category">
+                <div v-for="c in report.byCategory" :key="c.category" style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+                  <span style="font-weight:500;">{{ serviceCategoryOptions.find(o => o.value === c.category)?.label || c.category }}</span>
                   <NSpace align="center" :size="12">
-                    <NProgress type="line" :percentage="a.count > 0 ? Math.round((a.completed / a.count) * 100) : 0" :height="8" :border-radius="4" :show-indicator="false" style="width:80px;" />
-                    <span style="font-size:0.85rem;color:#94a3b8;">{{ a.completed }}/{{ a.count }}</span>
+                    <NProgress type="line" :percentage="c.count > 0 ? Math.round((c.completed / c.count) * 100) : 0" :height="8" :border-radius="4" :show-indicator="false" style="width:80px;" />
+                    <span style="font-size:0.85rem;color:#94a3b8;">{{ c.completed }}/{{ c.count }}</span>
                   </NSpace>
                 </div>
+                <NEmpty v-if="!report.byCategory?.length" description="No data" size="small" />
               </NCard>
             </NGi>
           </NGrid>
+
+          <!-- Monthly Trend Chart -->
+          <NCard v-if="report.byMonth?.length" size="small" title="Monthly Trends" style="margin-bottom:20px;">
+            <div style="height:260px;">
+              <VChart :option="{
+                tooltip: { trigger: 'axis' },
+                grid: { left: 40, right: 20, top: 30, bottom: 30 },
+                xAxis: { type: 'category', data: report.byMonth.slice().reverse().map((m: any) => m.month), axisLabel: { color: '#94a3b8', fontSize: 11 }, axisLine: { lineStyle: { color: '#2a2d3e' } } },
+                yAxis: { type: 'value', axisLabel: { color: '#94a3b8', fontSize: 11 }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } } },
+                series: [
+                  { name: 'Total', type: 'bar', data: report.byMonth.slice().reverse().map((m: any) => m.count), itemStyle: { color: '#0ea5e9', borderRadius: [4,4,0,0] }, barWidth: '40%' },
+                  { name: 'Completed', type: 'bar', data: report.byMonth.slice().reverse().map((m: any) => m.completed), itemStyle: { color: '#22c55e', borderRadius: [4,4,0,0] }, barWidth: '40%' },
+                ],
+                legend: { top: 0, textStyle: { color: '#94a3b8' } },
+              }" style="height:260px;" autoresize />
+            </div>
+          </NCard>
+
+          <!-- By Assignee (original, kept) -->
+          <NCard size="small" title="By Technician">
+            <div v-for="a in report.byAssignee" :key="a.assignee" style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+              <span style="font-weight:500;">{{ a.assignee }}</span>
+              <NSpace align="center" :size="12">
+                <NProgress type="line" :percentage="a.count > 0 ? Math.round((a.completed / a.count) * 100) : 0" :height="8" :border-radius="4" :show-indicator="false" style="width:80px;" />
+                <span style="font-size:0.85rem;color:#94a3b8;">{{ a.completed }}/{{ a.count }}</span>
+              </NSpace>
+            </div>
+          </NCard>
         </div>
         <NEmpty v-else-if="!reportLoading" description="No report data" />
       </NSpin>
@@ -444,17 +632,65 @@ const statusEditOptions = [
   </NSpin>
 
   <!-- Create/Edit Modal -->
-  <NModal v-model:show="showModal" preset="card" :title="editingId ? 'Edit Field Work' : 'Schedule Field Work'" style="width:560px;" :mask-closable="false">
+  <NModal v-model:show="showModal" preset="card" :title="editingId ? 'Edit Field Work' : 'Schedule Field Work'" style="width:620px;" :mask-closable="false">
     <NForm label-placement="top" size="small">
       <NFormItem label="Task Name" required><NInput v-model:value="form.taskName" placeholder="e.g., Install Room Bar Pro" /></NFormItem>
+
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-        <NFormItem label="Project"><NInput v-model:value="form.projectName" placeholder="Project name" /></NFormItem>
+        <NFormItem label="Service Category">
+          <NSelect v-model:value="form.serviceCategory" :options="serviceCategoryOptions" />
+        </NFormItem>
+        <NFormItem label="Priority">
+          <NSelect v-model:value="form.priority" :options="priorityOptions" />
+        </NFormItem>
+      </div>
+
+      <!-- Project linking (for project work) -->
+      <div v-if="form.serviceCategory === 'project'" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <NFormItem label="Link to Project">
+          <NSelect v-model:value="form.projectId" :options="projectOptions" placeholder="Search projects..." filterable clearable @update:value="onProjectSelect" />
+        </NFormItem>
         <NFormItem label="Type"><NSelect v-model:value="form.type" :options="typeOptions" /></NFormItem>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-        <NFormItem label="Location"><NInput v-model:value="form.location" placeholder="Building / Room" /></NFormItem>
-        <NFormItem label="Assignee"><NSelect v-model:value="form.assignee" :options="userOptions" placeholder="Select technician..." filterable clearable /></NFormItem>
+
+      <!-- Room linking (for room checks / service calls) -->
+      <div v-if="form.serviceCategory === 'room_check' || form.serviceCategory === 'service_call'" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <NFormItem label="Room">
+          <NSelect v-model:value="form.roomId" :options="roomOptions" placeholder="Search rooms..." filterable clearable @update:value="onRoomSelect" />
+        </NFormItem>
+        <NFormItem label="Type"><NSelect v-model:value="form.type" :options="typeOptions" /></NFormItem>
       </div>
+
+      <!-- Maintenance just gets type -->
+      <div v-if="form.serviceCategory === 'maintenance'">
+        <NFormItem label="Type"><NSelect v-model:value="form.type" :options="typeOptions" /></NFormItem>
+      </div>
+
+      <NFormItem label="Location"><NInput v-model:value="form.location" placeholder="Building / Room / Address" /></NFormItem>
+
+      <!-- Assignment: Internal vs Vendor -->
+      <NFormItem label="Performed By">
+        <NRadioGroup v-model:value="form.assignedType" size="small">
+          <NRadioButton value="internal"><i class="ph ph-user" style="margin-right:4px;" />Internal Team</NRadioButton>
+          <NRadioButton value="vendor"><i class="ph ph-buildings" style="margin-right:4px;" />Vendor</NRadioButton>
+        </NRadioGroup>
+      </NFormItem>
+
+      <div v-if="form.assignedType === 'internal'" style="display:grid;grid-template-columns:1fr;gap:12px;">
+        <NFormItem label="Assignee">
+          <NSelect v-model:value="form.assignee" :options="userOptions" placeholder="Select team member..." filterable clearable />
+        </NFormItem>
+      </div>
+
+      <div v-if="form.assignedType === 'vendor'" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <NFormItem label="Vendor">
+          <NSelect :value="form.vendorId" :options="vendorOptions" placeholder="Select vendor..." filterable clearable @update:value="onVendorSelect" />
+        </NFormItem>
+        <NFormItem label="Vendor Contact">
+          <NSelect v-model:value="form.vendorContact" :options="vendorContactOptions" placeholder="Select contact..." filterable clearable :disabled="!form.vendorId" />
+        </NFormItem>
+      </div>
+
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
         <NFormItem label="Date"><NInput v-model:value="form.scheduledDate" placeholder="YYYY-MM-DD" /></NFormItem>
         <NFormItem label="Start"><NInput v-model:value="form.startTime" placeholder="9:00 AM" /></NFormItem>
@@ -480,14 +716,22 @@ const statusEditOptions = [
       <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
         <NTag :type="({scheduled:'info','in-progress':'warning',completed:'success',pending:'default',cancelled:'error'} as any)[detailOp.status] || 'default'" size="medium">{{ detailOp.status }}</NTag>
         <NTag v-if="detailOp.type" size="medium" :bordered="false">{{ detailOp.type }}</NTag>
+        <NTag v-if="detailOp.serviceCategory && detailOp.serviceCategory !== 'project'" size="medium" :bordered="false" type="info">{{ serviceCategoryOptions.find(c => c.value === detailOp.serviceCategory)?.label || detailOp.serviceCategory }}</NTag>
+        <NTag v-if="detailOp.priority && detailOp.priority !== 'normal'" size="medium" :bordered="false" :type="detailOp.priority === 'urgent' ? 'error' : detailOp.priority === 'high' ? 'warning' : 'default'">{{ detailOp.priority }}</NTag>
+        <NTag v-if="detailOp.isVendor || detailOp.assignedType === 'vendor'" size="medium" :bordered="false" style="background:rgba(139,92,246,0.1);color:#8b5cf6;">Vendor</NTag>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;font-size:0.9rem;margin-bottom:20px;">
         <div v-if="detailOp.projectName"><span style="color:#94a3b8;">Project:</span> {{ detailOp.projectName || detailOp.project_name }}</div>
         <div v-if="detailOp.location"><span style="color:#94a3b8;">Location:</span> {{ detailOp.location }}</div>
-        <div v-if="detailOp.assignee || detailOp.assignedTo"><span style="color:#94a3b8;">Assignee:</span> {{ detailOp.assignee || detailOp.assignedTo }}</div>
+        <div v-if="detailOp.assignedType === 'vendor'">
+          <span style="color:#94a3b8;">Vendor:</span> {{ detailOp.vendorName || '-' }}
+          <span v-if="detailOp.vendorContact" style="color:#94a3b8;"> ({{ detailOp.vendorContact }})</span>
+        </div>
+        <div v-else-if="detailOp.assignee || detailOp.assignedTo"><span style="color:#94a3b8;">Assignee:</span> {{ detailOp.assignee || detailOp.assignedTo }}</div>
         <div><span style="color:#94a3b8;">Date:</span> {{ (detailOp.date || detailOp.scheduledDate || detailOp.scheduled_date) ? new Date(detailOp.date || detailOp.scheduledDate || detailOp.scheduled_date).toLocaleDateString() : '-' }}</div>
         <div v-if="detailOp.startTime || detailOp.start_time"><span style="color:#94a3b8;">Time:</span> {{ detailOp.startTime || detailOp.start_time }} - {{ detailOp.endTime || detailOp.end_time }}</div>
         <div v-if="detailOp.completedBy || detailOp.completed_by"><span style="color:#94a3b8;">Completed by:</span> {{ detailOp.completedBy || detailOp.completed_by }}</div>
+        <div v-if="detailOp.responseTimeHours"><span style="color:#94a3b8;">Response time:</span> {{ detailOp.responseTimeHours }}h</div>
       </div>
       <div v-if="detailOp.notes" style="padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);margin-bottom:20px;white-space:pre-wrap;font-size:0.9rem;">{{ detailOp.notes }}</div>
 

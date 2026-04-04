@@ -6,6 +6,7 @@ import GeneralSettings from './settings/GeneralSettings.vue';
 import NotificationSettings from './settings/NotificationSettings.vue';
 import DatabaseSettings from './settings/DatabaseSettings.vue';
 import FinancialSettings from './settings/FinancialSettings.vue';
+import IntegrationsSettings from './settings/IntegrationsSettings.vue';
 
 const store = useAdminStore();
 const activeSubTab = ref('general');
@@ -25,6 +26,9 @@ const activeSubTab = ref('general');
       </NTabPane>
       <NTabPane name="financial" tab="Financial">
         <FinancialSettings />
+      </NTabPane>
+      <NTabPane name="integrations" tab="Integrations">
+        <IntegrationsSettings />
       </NTabPane>
     </NTabs>
   </NSpin>

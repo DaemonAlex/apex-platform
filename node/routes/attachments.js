@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const logger = require('../utils/logger');
+const { auditLog } = require('../middleware/audit');
 const path = require('path');
 const fs = require('fs').promises;
 const jwt = require('jsonwebtoken');
@@ -71,7 +72,7 @@ const upload = multer({
 });
 
 // POST /api/attachments/:taskId - Upload files to a task
-router.post('/:taskId', authenticateToken, upload.array('files', 10), async (req, res) => {
+router.post('/:taskId', authenticateToken, upload.array('files', 10), auditLog('Attachment uploaded', 'project', 'info'), async (req, res) => {
     try {
         const { taskId } = req.params;
         const files = req.files;
@@ -167,7 +168,7 @@ router.get('/:taskId/:filename', authenticateToken, async (req, res) => {
 });
 
 // DELETE /api/attachments/:taskId/:filename - Delete a specific file
-router.delete('/:taskId/:filename', authenticateToken, async (req, res) => {
+router.delete('/:taskId/:filename', authenticateToken, auditLog('Attachment deleted', 'project', 'warning'), async (req, res) => {
     try {
         const { taskId, filename } = req.params;
         const filePath = path.join('/app/uploads/tasks', taskId, filename);

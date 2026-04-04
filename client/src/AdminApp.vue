@@ -5,6 +5,7 @@ import UsersTab from './components/admin/UsersTab.vue';
 import RolesTab from './components/admin/RolesTab.vue';
 import SettingsTab from './components/admin/SettingsTab.vue';
 import AuditLogTab from './components/admin/AuditLogTab.vue';
+import VendorsTab from './components/admin/VendorsTab.vue';
 import { useAdminStore } from './stores/admin';
 import { useTheme } from './composables/useTheme';
 
@@ -55,6 +56,9 @@ onMounted(() => {
           </NTabPane>
           <NTabPane name="audit" tab="Audit Log">
             <AuditLogTab />
+          </NTabPane>
+          <NTabPane name="vendors" tab="Vendors">
+            <VendorsTab />
           </NTabPane>
         </NTabs>
       </div>
