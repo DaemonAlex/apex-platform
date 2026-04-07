@@ -32,7 +32,7 @@ const pmOptions = ref<{ label: string; value: string }[]>([]);
 (async () => {
   try {
     const data = await apiFetch<{ users: any[] }>('/users');
-    pmOptions.value = (data.users || []).filter((u: any) => u.email !== 'service@apex.local').map((u: any) => ({ label: u.name, value: u.name }));
+    pmOptions.value = (data.users || []).map((u: any) => ({ label: u.name, value: u.name }));
   } catch {}
 })();
 

@@ -63,7 +63,7 @@ const AppState = {
         USE_BACKEND: true,     // Backend integration enabled
         apiUrl: '/api',        // API endpoint (proxied by Nginx)
         refreshInterval: 30000,
-        masterAccounts: ['admin@apex.local']
+        masterAccounts: []   // configured per-environment, not in source
     },
 
     // Budget tracking

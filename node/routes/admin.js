@@ -702,28 +702,44 @@ router.post('/cleanup-database', auditLog('Admin: cleanup database', 'admin', 'c
   }
 });
 
-// Clean up unwanted user accounts (keep only superadmin)
+// Clean up unwanted user accounts - deletes every user except the caller.
+//
+// Prior to 2026-04 this endpoint hardcoded `WHERE email != 'admin@apex.local'`,
+// which meant calling it from any other admin would delete the caller and
+// leave the system in an inconsistent state, AND it leaked an account name
+// into source. Now it preserves the authenticated caller (req.user.userId)
+// instead.
+//
+// This is a destructive operation - the route is already gated to admin-only
+// at the mount level (server.js: requireRole(['admin','superadmin','owner'])),
+// but the audit log severity is `critical` to make sure it's noticed.
 router.post('/cleanup-users', auditLog('Admin: cleanup users', 'admin', 'critical'), async (req, res) => {
   try {
-    logger.info('🗑️ Cleaning up unwanted user accounts...');
+    if (!req.user || !req.user.userId) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    const callerId = parseInt(req.user.userId, 10);
+    logger.security('Admin cleanup-users invoked', {
+      callerId,
+      callerEmail: req.user.email,
+      ip: req.ip
+    });
 
-    // Get current users to show what we're deleting
     const currentUsers = await pool.query('SELECT id, name, email, role FROM Users');
-    logger.info('Current users:', currentUsers.rows);
+    logger.info('Current users before cleanup', { count: currentUsers.rows.length });
 
-    // Delete all users except the superadmin account we just created (admin@apex.local)
-    const deleteResult = await pool.query(`DELETE FROM Users WHERE email != 'admin@apex.local'`);
+    // Delete every user except the caller. Caller's account is preserved
+    // so they don't lock themselves out.
+    const deleteResult = await pool.query('DELETE FROM Users WHERE id != $1', [callerId]);
 
-    logger.info(`🗑️ Deleted ${deleteResult.rowCount} unwanted accounts`);
+    logger.info('cleanup-users complete', { deletedCount: deleteResult.rowCount, preservedCallerId: callerId });
 
-    // Get remaining users
     const remainingUsers = await pool.query('SELECT id, name, email, role FROM Users');
-
-    // Connection pool kept open for reuse
 
     res.json({
       message: 'User cleanup completed',
       deletedCount: deleteResult.rowCount,
+      preservedCallerId: callerId,
       remainingUsers: remainingUsers.rows
     });
 

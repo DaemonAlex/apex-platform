@@ -75,11 +75,13 @@ Internet -> Cloudflare Tunnel -> nginx (port 80) -> Express API (port 3001)
 
 | What | Value |
 |------|-------|
-| Admin login | `admin@apex.local` / `***REDACTED-PASSWORD***` |
-| PostgreSQL superuser | `postgres` / `***REDACTED-PASSWORD***` |
-| PostgreSQL app user | `apex_user` / `***REDACTED-PASSWORD***` |
+| Admin login | bootstrapped via `node seed-admin.js` using `INITIAL_ADMIN_*` env vars - **never store the password in this file** |
+| PostgreSQL superuser | `postgres` (password set via `POSTGRES_PASSWORD` in `.env`) |
+| PostgreSQL app user | `apex_user` (password set via `DB_PASSWORD` in `.env`) |
 | Database | `apex_db` on localhost:5432 |
 | GitHub | https://github.com/DaemonAlex/apex-platform |
+
+**Credential policy: NO credentials in this file or any other tracked file.** All passwords come from `.env` (gitignored), Docker secrets (`*_FILE` convention), or are generated fresh per environment via `seed-admin.js` / `openssl rand`. If you find a hardcoded credential anywhere in the repo, treat it as compromised and rotate it. Historical git commits prior to 2026-04-07 contained leaked credentials - any production system that ever used those values needs rotation.
 
 ---
 
@@ -251,7 +253,7 @@ There is also a 5th endpoint for report data export.
 | 2026-03-29 | **Audit log date range filter.** Backend `audit.js` now accepts `fromDate`/`toDate` query params. Frontend syncs NDatePicker to store filters. |
 | 2026-03-29 | **Roles persisted to PostgreSQL.** New `Roles` table with 7 seeded defaults, user count JOIN, system role protection, lazy init for reboot safety. |
 | 2026-03-29 | **Dark mode toolbar toggle.** Sun/moon icon in nav bar, localStorage persistence, backend preference sync, no-flash page load via IIFE. |
-| 2026-03-29 | **Service account.** `service@apex.local` (admin role) for check-reports.js. Script now uses logged-in user's ID instead of hardcoded `id=1`. |
+| 2026-03-29 | **Service account** added for check-reports.js (credentials now sourced from `APEX_TEST_USER` / `APEX_TEST_PASSWORD` env vars, not hardcoded). Script uses logged-in user's ID instead of hardcoded `id=1`. |
 | 2026-03-29 | **VUE 3 MIGRATION COMPLETE.** All 7 sections (Dashboard, Projects, Room Status, Field Ops, Reports, Admin, Profile) on Vue 3. Bundle v=29, ~2.0MB. |
 | 2026-03-28 | **ARCHITECTURAL DECISION: Vue 3 migration.** Frontend moving from vanilla JS monolith to Vue 3 + TypeScript + Naive UI + Pinia + Vue Router. Backend adding Drizzle ORM. Section-by-section, starting with Room Status. |
 | 2026-03-28 | Room Status system redesigned: Locations > Floors > Rooms hierarchy, equipment inventory, room standards with compliance, configurable check frequency (daily/weekly/biweekly/monthly), full audit trail with SNOW tickets |
@@ -419,7 +421,7 @@ Check Cloudflare tunnel, then nginx, then backend - in that order:
 - Dark mode toolbar toggle with localStorage persistence + CustomEvent for Vue sync
 - Shared useTheme composable with full light/dark Naive UI overrides + semantic colors
 - Light mode: white nav bar, proper card/table/input styling, Dashboard chart colors reactive
-- Service account (`service@apex.local`) for automated testing
+- Service account for automated testing (credentials via `APEX_TEST_USER` / `APEX_TEST_PASSWORD` env vars)
 - Fixed Room Status routing bug (Vite IIFE library name collision - `ApexRooms` -> `ApexBundle`)
 - README rewritten for v8.0
 - Pushed to GitHub: 3 commits (`be0dac9`, `5b993dd`, `f9c047f`)
@@ -441,8 +443,8 @@ nssm restart APEX-Backend
 ```
 
 **Accounts:**
-- `damonalexander@me.com` (owner) - real user account
-- `service@apex.local` / `***REDACTED-PASSWORD***` (admin) - service account for check-reports.js
+- `damonalexander@me.com` (owner) - real user account, password set per-environment
+- Service accounts for `check-reports.js` / test scripts: credentials read from env vars (`APEX_TEST_USER` / `APEX_TEST_PASSWORD`), not hardcoded - see `.env.example`
 
 **Next steps (pick any):**
 1. Light mode polish - audit FieldOps, Reports, RoomApp, ProjectApp for hardcoded dark inline styles

@@ -310,9 +310,9 @@ if ((qe || qp) && !token) {
 
 **Attack Scenario:**
 ```
-https://apex.daemonscripts.com/?email=admin@apex.local&password=***REDACTED-PASSWORD***
+https://apex.daemonscripts.com/?email=<target>&password=<known-password>
 ```
-This would auto-login without user interaction!
+This would auto-login without user interaction! (Real example credentials redacted from this audit document on 2026-04-07.)
 
 ### 3.2 Remediation Implemented
 

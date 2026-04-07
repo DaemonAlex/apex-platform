@@ -32,9 +32,20 @@ Log "============================================"
 
 # ============================================================
 # 1. PostgreSQL (APEX database)
+#
+# PGPASSWORD must be set in the environment before running this script.
+# Example: $env:PGPASSWORD = "<your-postgres-superuser-password>"
+#          .\backup.ps1
+#
+# Do NOT hardcode the password here - committed to git.
 # ============================================================
 Write-Host "`n[1/5] PostgreSQL (apex_db)..." -ForegroundColor Cyan
-$env:PGPASSWORD = "***REDACTED-PASSWORD***"
+if (-not $env:PGPASSWORD) {
+    Write-Host "ERROR: PGPASSWORD environment variable is not set." -ForegroundColor Red
+    Write-Host "       Set it before running this script:" -ForegroundColor Red
+    Write-Host "       `$env:PGPASSWORD = '<your-password>'" -ForegroundColor Red
+    exit 1
+}
 
 # Custom format (for pg_restore)
 & "C:\Program Files\PostgreSQL\16\bin\pg_dump" -h localhost -U postgres -d apex_db -F c -f "$BackupDir\databases\apex_db.dump" 2>&1

@@ -108,7 +108,7 @@ const vendorOptions = ref<{ label: string; value: number }[]>([]);
     ]);
     const uData = await uRes.json();
     const vData = await vRes.json();
-    pmOptions.value = (uData.users || []).filter((u: any) => u.email !== 'service@apex.local').map((u: any) => ({ label: u.name, value: u.name }));
+    pmOptions.value = (uData.users || []).map((u: any) => ({ label: u.name, value: u.name }));
     vendorOptions.value = (vData.vendors || []).map((v: any) => ({ label: v.name + ' (' + v.type + ')', value: v.id }));
   } catch {}
 })();

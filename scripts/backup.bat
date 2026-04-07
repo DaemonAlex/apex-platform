@@ -31,9 +31,19 @@ echo.
 
 REM ============================================================
 REM 1. PostgreSQL (APEX database)
+REM
+REM PGPASSWORD must be set in the environment before running this script.
+REM Example: set PGPASSWORD=<your-postgres-superuser-password> & backup.bat
+REM
+REM Or set it permanently for the user/system via Windows env vars.
+REM Do NOT hardcode the password here - committed to git.
 REM ============================================================
 echo [1/5] Backing up PostgreSQL (apex_db)...
-set PGPASSWORD=***REDACTED-PASSWORD***
+if "%PGPASSWORD%"=="" (
+    echo ERROR: PGPASSWORD environment variable is not set.
+    echo        Set it before running this script:  set PGPASSWORD=^<your-password^>
+    exit /b 1
+)
 "C:\Program Files\PostgreSQL\16\bin\pg_dump" -h localhost -U postgres -d apex_db -F c -f "%BACKUP_DIR%\databases\apex_db.dump" 2>>"%LOG%"
 if %ERRORLEVEL% EQU 0 (
     echo       OK - apex_db.dump

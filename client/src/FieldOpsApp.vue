@@ -166,7 +166,7 @@ const roomOptions = ref<{ label: string; value: number; raw: any }[]>([]);
     const [usersData, projData, vendData, roomData] = await Promise.all([
       usersRes.json(), projRes.json(), vendRes.json(), roomRes.json(),
     ]);
-    userOptions.value = (usersData.users || []).filter((u: any) => u.email !== 'service@apex.local').map((u: any) => ({ label: u.name, value: u.name }));
+    userOptions.value = (usersData.users || []).map((u: any) => ({ label: u.name, value: u.name }));
     projectOptions.value = (projData.projects || []).filter((p: any) => p.status !== 'cancelled').map((p: any) => ({ label: `${p.name}${p.status ? ' (' + p.status + ')' : ''}`, value: String(p.id), raw: p }));
     vendorOptions.value = (vendData.vendors || vendData || []).map((v: any) => ({ label: v.name, value: v.id, raw: v }));
     roomOptions.value = (roomData.rooms || []).map((r: any) => ({ label: `${r.name}${r.location ? ' - ' + r.location : ''}`, value: r.id, raw: r }));

@@ -185,7 +185,7 @@ AuthenticationModes = {
     'local': {
         method: 'Master Account',
         storage: 'localStorage',
-        accounts: ['admin@apex.local'],
+        accounts: [],   // configured per-environment, not in source
         offline: true
     },
     'backend': {

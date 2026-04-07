@@ -1,10 +1,22 @@
 // Report endpoint validation script
 // Run after backend changes to verify all report endpoints return valid data
+//
+// Credentials are read from environment variables. Set APEX_TEST_USER and
+// APEX_TEST_PASSWORD before running. Do NOT hardcode credentials here -
+// this file is in the source tree (though excluded from docker images via
+// .dockerignore).
 
 const http = require('http');
 
-const API = 'http://localhost:3001';
-const CREDS = { email: 'service@apex.local', password: '***REDACTED-PASSWORD***' };
+const API = process.env.APEX_API_URL || 'http://localhost:3001';
+if (!process.env.APEX_TEST_USER || !process.env.APEX_TEST_PASSWORD) {
+  console.error('ERROR: APEX_TEST_USER and APEX_TEST_PASSWORD environment variables must be set');
+  process.exit(1);
+}
+const CREDS = {
+  email: process.env.APEX_TEST_USER,
+  password: process.env.APEX_TEST_PASSWORD,
+};
 
 async function fetch(url, options = {}) {
   return new Promise((resolve, reject) => {

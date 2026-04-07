@@ -22,7 +22,7 @@ const userOptions = ref<{ label: string; value: string }[]>([]);
 (async () => {
   try {
     const data = await apiFetch<{ users: any[] }>('/users');
-    userOptions.value = (data.users || []).filter((u: any) => u.email !== 'service@apex.local').map((u: any) => ({ label: u.name, value: u.name }));
+    userOptions.value = (data.users || []).map((u: any) => ({ label: u.name, value: u.name }));
   } catch {}
 })();
 

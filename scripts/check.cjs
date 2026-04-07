@@ -25,13 +25,22 @@ async function checkHealth() {
   } catch (e) { fail('Backend health check', e.message); }
 }
 
+// Credentials are read from environment variables. Set APEX_TEST_USER and
+// APEX_TEST_PASSWORD before running this script. Do NOT hardcode credentials
+// here - this file is committed to git.
+const TEST_USER = process.env.APEX_TEST_USER;
+const TEST_PASSWORD = process.env.APEX_TEST_PASSWORD;
+
 let cachedToken = null;
 async function getToken() {
   if (cachedToken) return cachedToken;
+  if (!TEST_USER || !TEST_PASSWORD) {
+    throw new Error('APEX_TEST_USER and APEX_TEST_PASSWORD environment variables must be set');
+  }
   const loginRes = await fetch(`${BASE_URL}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'service@apex.local', password: '***REDACTED-PASSWORD***' }),
+    body: JSON.stringify({ email: TEST_USER, password: TEST_PASSWORD }),
   });
   const loginData = await loginRes.json();
   if (!loginData.token) throw new Error('Auth failed: ' + JSON.stringify(loginData));
