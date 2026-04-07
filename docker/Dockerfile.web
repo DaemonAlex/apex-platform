@@ -1,0 +1,29 @@
+# APEX Web - nginx serving the prebuilt frontend (index.html + Vue IIFE bundle)
+# Builds the Vue bundle from client/ source so the image always matches the
+# committed source. Vite is configured to output to ../vue (see client/vite.config.ts).
+
+# ---- Build Vue bundle from source ----
+FROM node:20-alpine AS client-build
+WORKDIR /src
+COPY client/ ./client/
+WORKDIR /src/client
+RUN npm ci && npm run build
+# Output now lives at /src/vue per vite.config.ts (outDir: '../vue')
+
+# ---- Final nginx image ----
+FROM nginx:1.27-alpine
+
+RUN apk add --no-cache wget \
+ && rm -rf /usr/share/nginx/html/* /etc/nginx/conf.d/default.conf
+
+# App shell + static assets
+COPY index.html /usr/share/nginx/html/index.html
+COPY images/ /usr/share/nginx/html/images/
+COPY --from=client-build /src/vue/ /usr/share/nginx/html/vue/
+
+# nginx config (proxies /api -> backend service)
+COPY docker/nginx.conf /etc/nginx/conf.d/apex.conf
+
+EXPOSE 80
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD wget -qO- http://localhost/healthz || exit 1

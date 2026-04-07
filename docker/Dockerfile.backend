@@ -1,0 +1,33 @@
+# APEX Backend - Express + PostgreSQL client
+# Multi-stage build for smaller production image
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY node/package.json node/package-lock.json* ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+FROM node:20-alpine AS runtime
+WORKDIR /app
+
+# Non-root user
+RUN addgroup -S apex && adduser -S apex -G apex
+
+# Install tini for proper signal handling (graceful shutdown)
+RUN apk add --no-cache tini wget
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY node/ ./
+
+# Uploads directory (matches multer path in routes/attachments.js)
+RUN mkdir -p /app/uploads/tasks && chown -R apex:apex /app
+
+USER apex
+
+ENV NODE_ENV=production
+ENV PORT=3001
+EXPOSE 3001
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD wget -qO- http://localhost:3001/health || exit 1
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "server.js"]

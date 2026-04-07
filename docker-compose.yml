@@ -1,0 +1,76 @@
+# APEX Platform - Docker Compose
+# Three services: PostgreSQL 16, Express backend, nginx web tier.
+# Configure via .env (copy from .env.example).
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: apex-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-apex_db}
+      POSTGRES_USER: ${DB_USERNAME:-apex_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+    volumes:
+      - apex-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-apex_user} -d ${DB_DATABASE:-apex_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - apex-net
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    image: apex-backend:latest
+    container_name: apex-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-apex_db}
+      DB_USERNAME: ${DB_USERNAME:-apex_user}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
+      # Optional Cisco Control Hub integration
+      CISCO_CLIENT_ID: ${CISCO_CLIENT_ID:-}
+      CISCO_CLIENT_SECRET: ${CISCO_CLIENT_SECRET:-}
+      CISCO_ORG_ID: ${CISCO_ORG_ID:-}
+      CISCO_PERSONAL_TOKEN: ${CISCO_PERSONAL_TOKEN:-}
+      CISCO_MOCK_MODE: ${CISCO_MOCK_MODE:-true}
+    volumes:
+      - apex-uploads:/app/uploads
+    networks:
+      - apex-net
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.web
+    image: apex-web:latest
+    container_name: apex-web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    networks:
+      - apex-net
+
+volumes:
+  apex-db-data:
+  apex-uploads:
+
+networks:
+  apex-net:
+    driver: bridge
