@@ -279,6 +279,164 @@ Both are safe for load-balancer probes.
 
 ---
 
+## Configuration reference
+
+All settings are environment variables. The compose file passes them through
+to the backend container. Defaults in parentheses.
+
+### Required
+
+| Variable | Description |
+|---|---|
+| `DB_PASSWORD` | PostgreSQL password. Compose refuses to start without it. Generate: `openssl rand -base64 24` |
+| `JWT_SECRET` | Token signing key. Compose refuses to start without it. Generate: `openssl rand -base64 48` |
+| `INITIAL_ADMIN_EMAIL` | First admin user, consumed by `seed-admin.js` |
+| `INITIAL_ADMIN_PASSWORD` | First admin password (12+ chars, mixed case, digit, special, no triples, no common sequences) |
+
+### Database
+
+| Variable | Default | Description |
+|---|---|---|
+| `DB_HOST` | `db` | Hostname or service name. Set to FQDN for external/managed PostgreSQL |
+| `DB_PORT` | `5432` | |
+| `DB_DATABASE` | `apex_db` | |
+| `DB_USERNAME` | `apex_user` | |
+| `DB_POOL_MAX` | `20` | Max pool size |
+| `DB_POOL_IDLE_MS` | `30000` | Idle connection timeout |
+| `DB_CONNECT_TIMEOUT_MS` | `10000` | Connection timeout |
+| `DB_SSL` | `false` | Set to `true` for managed PostgreSQL (RDS, Azure DB, GCP Cloud SQL) or any cross-network DB |
+| `DB_SSL_REJECT_UNAUTHORIZED` | `true` | Verify the server cert. Set to `false` ONLY for self-signed certs in trusted private networks |
+| `DB_SSL_CA` | unset | Path INSIDE THE CONTAINER to a CA cert PEM file. Mount it with a volume |
+| `DB_SSL_CERT`, `DB_SSL_KEY` | unset | Optional client cert/key for mutual TLS |
+
+### Auth and TLS
+
+| Variable | Default | Description |
+|---|---|---|
+| `JWT_EXPIRES_IN` | `7d` | Token lifetime. Examples: `24h`, `7d`, `30d` |
+| `TLS_MIN_VERSION` | `TLSv1.2` | Minimum TLS version for ALL outbound HTTPS (DB, Cisco, future integrations). Do not lower without a compliance reason |
+| `FRONTEND_URL` | `http://localhost:8080` | Public origin used for CORS. Must match how users reach the app |
+
+### Web tier
+
+| Variable | Default | Description |
+|---|---|---|
+| `WEB_PORT` | `8080` | Host port for the nginx container |
+
+### Logging
+
+| Variable | Default | Description |
+|---|---|---|
+| `LOG_LEVEL` | `info` | `error` / `warn` / `info` / `debug` |
+
+### Optional: Cisco Control Hub
+
+| Variable | Default | Description |
+|---|---|---|
+| `CISCO_MOCK_MODE` | `true` | When `true`, returns static fixture data instead of calling the live API. Set to `false` and provide credentials to talk to a real org |
+| `CISCO_CLIENT_ID` | unset | OAuth client ID |
+| `CISCO_CLIENT_SECRET` | unset | OAuth client secret |
+| `CISCO_ORG_ID` | unset | Webex org id |
+| `CISCO_PERSONAL_TOKEN` | unset | Personal access token (overrides client credentials flow when set) |
+
+---
+
+## Connecting to an external/managed PostgreSQL
+
+To run the backend against AWS RDS, Azure Database for PostgreSQL, GCP Cloud
+SQL, or your own external Postgres cluster instead of the in-stack `db`
+container:
+
+1. **Comment out or remove the `db` service** in `docker-compose.yml` and the
+   `depends_on: db` block in the `backend` service.
+2. **Point the backend at the external host** in `.env`:
+   ```bash
+   DB_HOST=apex-prod.cluster-xxxxx.us-east-1.rds.amazonaws.com
+   DB_PORT=5432
+   DB_DATABASE=apex_db
+   DB_USERNAME=apex_user
+   DB_PASSWORD=<from secrets manager>
+   DB_SSL=true
+   DB_SSL_REJECT_UNAUTHORIZED=true
+   DB_SSL_CA=/etc/apex/db-ca.pem
+   ```
+3. **Mount the CA cert** into the backend container. Add to the `backend`
+   service in `docker-compose.yml`:
+   ```yaml
+   volumes:
+     - apex-uploads:/app/uploads
+     - ./certs/rds-ca.pem:/etc/apex/db-ca.pem:ro
+   ```
+4. **Pre-create the database and user** on the managed instance with the
+   same name and credentials. The backend will auto-create the tables on
+   first request.
+5. `docker compose up -d` and `docker compose exec backend node seed-admin.js`
+   to bootstrap the first admin.
+
+---
+
+## Security model
+
+### Roles
+
+| Role | Can do |
+|---|---|
+| `superadmin`, `admin`, `owner` | Everything: create/update/delete users, roles, settings, audit log access, all project/room/field-ops actions |
+| `project_manager` | Manage projects, tasks, rooms, vendors, contacts. Cannot modify users or system settings |
+| `field_ops` | Field operations sections, project task updates, room checks |
+| `auditor` | Read-only access to projects, rooms, audit log |
+| `viewer` | Read-only baseline |
+
+### What's locked down (2026-04 hardening pass)
+
+- **Public registration is disabled.** `POST /api/auth/register` returns 404.
+  Create users via `seed-admin.js` (first user) or via the admin UI / `POST /api/users` (subsequent users, admin-only).
+- **`POST /api/users`, `PUT /api/users/:id`, `DELETE /api/users/:id`,
+  `POST /api/users/:id/reset-password`** are gated to admin/superadmin/owner.
+  Previously any logged-in user (including a `viewer`) could create
+  superadmins, change anyone's role, delete the only admin, or trigger an
+  admin password reset for any account and read the temp password from the
+  response.
+- **`PUT /api/users/:id/password`, `PUT /api/users/:id/preferences`,
+  `PUT /api/users/:id/avatar`, `DELETE /api/users/:id/avatar`** are gated by
+  the `requireSelfOrAdmin` middleware: a user can act on their own record,
+  admins can act on any.
+- **Admin password reset** uses `crypto.randomBytes(12)` for the temp
+  password (was `Math.random` previously) and forces the target user to
+  change it on next login.
+- **TLS 1.2 minimum** is enforced globally for all outbound HTTPS via
+  `tls.DEFAULT_MIN_VERSION`. Configurable via `TLS_MIN_VERSION` env var.
+- **PostgreSQL TLS** is supported via `DB_SSL` family of env vars.
+- **nginx** sets a strict CSP, `Permissions-Policy`, `X-Frame-Options: DENY`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`,
+  `server_tokens off`. HSTS is left to the upstream TLS terminator (commented
+  example in `docker/nginx.conf`).
+- **Helmet** sets equivalent headers on API responses, including a CSP.
+- **Rate limiting**: 500 req / 15 min globally, 15 attempts / 15 min on
+  `/api/auth/*` (login, password reset).
+- **Password policy**: 12 char minimum, mixed case, digit, special character,
+  no three repeated characters, no common sequences. Passwords expire after
+  60 days. Admin reset forces a change on next login.
+- **JWT** signed with `JWT_SECRET` (min 48 random bytes recommended), default
+  7-day lifetime, rejected on expiration with a clear error.
+- **Audit log** records every user mutation, login, password change, admin
+  reset, and disabled register attempt.
+
+### What's NOT enforced by the docker stack itself
+
+- **TLS in transit to the browser.** The `web` container speaks plain HTTP.
+  Put it behind an upstream TLS terminator (nginx, Traefik, Cloudflare
+  Tunnel, F5, etc.) and uncomment the HSTS header in `docker/nginx.conf` if
+  you front this container directly with TLS.
+- **Network egress filtering.** If your security policy requires the backend
+  to only talk to specific CIDRs (DB host, Cisco API, internal services),
+  enforce that at the host firewall or in your container network.
+- **Secrets storage.** `.env` is a plain file on the host. For production
+  consider Docker secrets, Vault, AWS Secrets Manager, etc., and pass values
+  in via the environment.
+
+---
+
 ## Security checklist
 
 Before exposing this to anyone:
@@ -289,10 +447,14 @@ Before exposing this to anyone:
 - [ ] `INITIAL_ADMIN_PASSWORD` was changed from the Profile page after first login, then removed from `.env`
 - [ ] `FRONTEND_URL` is set to your real public origin so CORS rejects everything else
 - [ ] `WEB_PORT` (default 8080) is firewalled off from the public internet - only the upstream TLS proxy should reach it
+- [ ] If the database is on a different host, `DB_SSL=true` and `DB_SSL_CA` is set to a pinned CA file
+- [ ] `TLS_MIN_VERSION=TLSv1.2` (the default) - do not lower without a documented compliance reason
 - [ ] DB and uploads volumes are in your backup rotation, with a tested restore
 - [ ] `docker compose pull` runs periodically to refresh `postgres:16-alpine` and the base node/nginx images for security updates
 - [ ] Host OS is patched and Docker daemon is on a recent version
-- [ ] If the app is internet-facing, the upstream proxy enforces TLS, HSTS, and rate-limits authentication endpoints
+- [ ] If the app is internet-facing, the upstream proxy enforces TLS 1.2+, HSTS, and rate-limits authentication endpoints
+- [ ] Confirmed `POST /api/auth/register` returns 404 (smoke test: `curl -i -X POST http://localhost:8080/api/auth/register`)
+- [ ] Confirmed a non-admin user cannot create/delete users or trigger password resets for other users
 
 ### What's in the image
 

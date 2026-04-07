@@ -3,7 +3,14 @@ const { pool } = require('../db');
 const logger = require('../utils/logger');
 const { auditLog } = require('../middleware/audit');
 const { validate, body, param } = require('../middleware/validate');
+const { requireRole, requireSelfOrAdmin } = require('../middleware/auth');
 const router = express.Router();
+
+// Admin role gate reused throughout this file for user-management routes.
+// Mounting it per-route (instead of on the router) lets /me, /:id/preferences,
+// /:id/avatar, and /:id/password remain reachable for the user themselves
+// while still blocking cross-user actions.
+const adminOnly = requireRole(['admin', 'superadmin', 'owner']);
 
 // Import validatePassword from auth module pattern (inline for standardization)
 function validatePassword(password) {
@@ -89,8 +96,9 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Update a user
+// Update a user (admin only - changes name/email/role for any user)
 router.put('/:id',
+  adminOnly,
   validate([
     param('id').isInt({ min: 1 }).withMessage('User ID must be a positive integer'),
     body('name').trim().notEmpty().withMessage('Name is required').isLength({ min: 1, max: 255 }).withMessage('Name must be 1-255 characters'),
@@ -154,8 +162,10 @@ router.put('/:id',
   }
 });
 
-// Change user password - ASRB 5.1.3: Standardized to 12-char + complexity
+// Change user password (self-service - users may only change their own)
+// Admin password reset for OTHER users goes through POST /:id/reset-password.
 router.put('/:id/password',
+  requireSelfOrAdmin('id'),
   validate([
     param('id').isInt({ min: 1 }).withMessage('User ID must be a positive integer'),
     body('currentPassword').notEmpty().withMessage('Current password is required'),
@@ -222,8 +232,8 @@ router.put('/:id/password',
   }
 });
 
-// Update user preferences
-router.put('/:id/preferences', async (req, res) => {
+// Update user preferences (self-service or admin)
+router.put('/:id/preferences', requireSelfOrAdmin('id'), async (req, res) => {
   try {
     const userId = req.params.id;
     const preferences = req.body;
@@ -254,8 +264,8 @@ router.put('/:id/preferences', async (req, res) => {
   }
 });
 
-// Update user avatar
-router.put('/:id/avatar', async (req, res) => {
+// Update user avatar (self-service or admin)
+router.put('/:id/avatar', requireSelfOrAdmin('id'), async (req, res) => {
   try {
     const userId = req.params.id;
     const { avatar } = req.body;
@@ -293,8 +303,8 @@ router.put('/:id/avatar', async (req, res) => {
   }
 });
 
-// Remove user avatar
-router.delete('/:id/avatar', async (req, res) => {
+// Remove user avatar (self-service or admin)
+router.delete('/:id/avatar', requireSelfOrAdmin('id'), async (req, res) => {
   try {
     const userId = req.params.id;
 
@@ -322,8 +332,9 @@ router.delete('/:id/avatar', async (req, res) => {
   }
 });
 
-// Create new user
+// Create new user (admin only)
 router.post('/',
+  adminOnly,
   validate([
     body('name').trim().notEmpty().withMessage('Name is required').isLength({ min: 1, max: 255 }),
     body('email').isEmail().withMessage('Must be a valid email address').normalizeEmail(),
@@ -387,8 +398,9 @@ router.post('/',
   }
 });
 
-// Delete user
+// Delete user (admin only)
 router.delete('/:id',
+  adminOnly,
   validate([
     param('id').isInt({ min: 1 }).withMessage('User ID must be a positive integer')
   ]),
@@ -419,8 +431,20 @@ router.delete('/:id',
   }
 });
 
-// Reset user password
+// Admin-driven password reset for another user.
+//
+// Returns a one-time temporary password that the admin must securely
+// communicate to the user out-of-band (chat, in person, encrypted email).
+// `force_password_change = TRUE` means the user is forced to set a new
+// password on their first login with this temp value.
+//
+// The temp password is generated from crypto.randomBytes (NOT Math.random).
+//
+// Gated to admin/superadmin/owner only - prior to 2026-04 this endpoint
+// was reachable by any logged-in user, which made every account in the
+// system trivially compromisable.
 router.post('/:id/reset-password',
+  adminOnly,
   validate([
     param('id').isInt({ min: 1 }).withMessage('User ID must be a positive integer')
   ]),
@@ -433,16 +457,21 @@ router.post('/:id/reset-password',
     const existingUser = await pool.query('SELECT id, email FROM users WHERE id = $1', [userId]);
 
     if (existingUser.rows.length === 0) {
-      // Connection pool kept open for reuse
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Generate temporary password
-    const tempPassword = Math.random().toString(36).slice(-8) + 'A1!';
+    // Generate a cryptographically secure temporary password that satisfies
+    // the standard validator (>=12 chars, mixed case, digit, special). 16
+    // base64url chars from 12 random bytes + a fixed Aa1! suffix to
+    // guarantee class coverage without weakening entropy.
+    const crypto = require('crypto');
+    const randomPart = crypto.randomBytes(12).toString('base64')
+      .replace(/\+/g, '0').replace(/\//g, '0').replace(/=/g, '');
+    const tempPassword = `${randomPart}Aa1!`;
+
     const bcrypt = require('bcryptjs');
     const hashedPassword = await bcrypt.hash(tempPassword, 12);
 
-    // Update user password
     await pool.query(`
       UPDATE users
       SET password = $1,
@@ -453,12 +482,18 @@ router.post('/:id/reset-password',
       WHERE id = $3
     `, [hashedPassword, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), userId]);
 
-    logger.info('Admin password reset', { userId, targetEmail: existingUser.rows[0].email, resetBy: req.user?.email });
+    logger.security('Admin password reset issued', {
+      userId,
+      targetEmail: existingUser.rows[0].email,
+      resetBy: req.user?.email,
+      resetByUserId: req.user?.userId
+    });
 
-    // Connection pool kept open for reuse
     res.json({
       message: 'Password reset successfully',
-      temporaryPassword: tempPassword
+      temporaryPassword: tempPassword,
+      mustChangeOnLogin: true,
+      expiresInDays: 7
     });
 
   } catch (error) {

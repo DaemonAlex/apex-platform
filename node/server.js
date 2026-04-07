@@ -1,3 +1,12 @@
+// Enforce TLS 1.2 minimum for ALL outbound HTTPS made by this process,
+// before anything else loads. This applies to the Cisco Control Hub client,
+// the Drizzle/pg PostgreSQL connection (when DB_SSL is on), nodemailer,
+// and any future integrations. Node.js negotiates TLS 1.2+ by default
+// since v12, but we set this explicitly so a misconfigured global agent
+// or an older library cannot silently negotiate down.
+const tls = require('tls');
+tls.DEFAULT_MIN_VERSION = process.env.TLS_MIN_VERSION || 'TLSv1.2';
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');

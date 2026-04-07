@@ -4,16 +4,43 @@ const logger = require('../utils/logger');
 const { auditLog } = require('../middleware/audit');
 const router = express.Router();
 
-// Auto-migration: add new field ops columns if missing
+// Auto-migration: ensure fieldops table exists, then add any newer columns.
+// Prior to 2026-04 the table itself was assumed to exist somewhere else
+// (it never actually was), so the migration logged "relation fieldops does
+// not exist" on every backend startup and the field ops feature failed
+// silently on the first request from a fresh DB.
 let migrationDone = false;
-async function ensureFieldOpColumns() {
+async function ensureFieldOpColumns(retries = 5) {
   if (migrationDone) return;
-  try {
-    await pool.query(`
-      DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fieldops' AND column_name='vendor_id') THEN
-          ALTER TABLE fieldops ADD COLUMN vendor_id INTEGER NULL;
-        END IF;
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS fieldops (
+          id SERIAL PRIMARY KEY,
+          project_id VARCHAR(50),
+          task_id VARCHAR(50),
+          task_name TEXT,
+          project_name TEXT,
+          type VARCHAR(50) DEFAULT 'service',
+          location TEXT,
+          scheduled_date DATE,
+          start_time VARCHAR(20),
+          end_time VARCHAR(20),
+          assignee VARCHAR(255),
+          notes TEXT,
+          estimated_duration NUMERIC(6,2),
+          status VARCHAR(20) DEFAULT 'scheduled',
+          completed_at TIMESTAMPTZ,
+          completed_by VARCHAR(255),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await pool.query(`
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fieldops' AND column_name='vendor_id') THEN
+            ALTER TABLE fieldops ADD COLUMN vendor_id INTEGER NULL;
+          END IF;
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fieldops' AND column_name='vendor_contact') THEN
           ALTER TABLE fieldops ADD COLUMN vendor_contact VARCHAR(255) NULL;
         END IF;
@@ -37,10 +64,17 @@ async function ensureFieldOpColumns() {
         END IF;
       END $$;
     `);
-    migrationDone = true;
-    logger.info('Field ops columns migration complete');
-  } catch (err) {
-    logger.error('Field ops migration error', { error: err.message });
+      migrationDone = true;
+      logger.info('Field ops table and migrations ready');
+      return;
+    } catch (err) {
+      if (attempt === retries - 1) {
+        logger.error('Field ops migration failed', { error: err.message });
+        return;
+      }
+      // Backoff: 1s, 2s, 4s, 8s, 16s - tolerate slow DB startup
+      await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
+    }
   }
 }
 ensureFieldOpColumns();

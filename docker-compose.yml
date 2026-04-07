@@ -34,19 +34,32 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3001
-      DB_HOST: db
-      DB_PORT: 5432
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TLS_MIN_VERSION: ${TLS_MIN_VERSION:-TLSv1.2}
+      # --- Database (defaults point at the in-stack `db` service) ---
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-5432}
       DB_DATABASE: ${DB_DATABASE:-apex_db}
       DB_USERNAME: ${DB_USERNAME:-apex_user}
       DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      DB_POOL_MAX: ${DB_POOL_MAX:-20}
+      DB_POOL_IDLE_MS: ${DB_POOL_IDLE_MS:-30000}
+      DB_CONNECT_TIMEOUT_MS: ${DB_CONNECT_TIMEOUT_MS:-10000}
+      # --- Database TLS (set DB_SSL=true for managed/external PostgreSQL) ---
+      DB_SSL: ${DB_SSL:-false}
+      DB_SSL_REJECT_UNAUTHORIZED: ${DB_SSL_REJECT_UNAUTHORIZED:-true}
+      DB_SSL_CA: ${DB_SSL_CA:-}
+      DB_SSL_CERT: ${DB_SSL_CERT:-}
+      DB_SSL_KEY: ${DB_SSL_KEY:-}
+      # --- Auth ---
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
-      # Initial admin bootstrap (consumed by node seed-admin.js, not server.js)
+      # --- Initial admin bootstrap (consumed by node seed-admin.js, not server.js) ---
       INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-}
       INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
       INITIAL_ADMIN_NAME: ${INITIAL_ADMIN_NAME:-APEX Administrator}
-      # Optional Cisco Control Hub integration
+      # --- Optional: Cisco Control Hub integration ---
       CISCO_CLIENT_ID: ${CISCO_CLIENT_ID:-}
       CISCO_CLIENT_SECRET: ${CISCO_CLIENT_SECRET:-}
       CISCO_ORG_ID: ${CISCO_ORG_ID:-}
@@ -54,6 +67,8 @@ services:
       CISCO_MOCK_MODE: ${CISCO_MOCK_MODE:-true}
     volumes:
       - apex-uploads:/app/uploads
+      # Mount external CA certs here when DB_SSL_CA points inside this directory:
+      # - ./certs:/etc/apex/certs:ro
     networks:
       - apex-net
 

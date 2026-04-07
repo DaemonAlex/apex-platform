@@ -93,7 +93,61 @@ const requireRole = (allowedRoles) => {
   };
 };
 
+/**
+ * Self-or-admin authorization middleware.
+ *
+ * Allows the request through if the authenticated user is acting on their
+ * own record (req.params[paramName] === req.user.userId) OR is an admin /
+ * superadmin / owner. Use after authenticateToken on routes like
+ *   PUT /api/users/:id/password
+ *   PUT /api/users/:id/preferences
+ *   PUT /api/users/:id/avatar
+ * where users may modify their own profile but only admins may modify
+ * anyone else's.
+ *
+ * @param {string} paramName - the URL parameter holding the target user id (default 'id')
+ */
+const requireSelfOrAdmin = (paramName = 'id') => {
+  const adminRoles = ['admin', 'superadmin', 'owner'];
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        error: 'Not authenticated',
+        message: 'Please login first'
+      });
+    }
+
+    const targetId = parseInt(req.params[paramName], 10);
+    const callerId = parseInt(req.user.userId, 10);
+
+    if (Number.isNaN(targetId)) {
+      return res.status(400).json({ error: `Invalid ${paramName} parameter` });
+    }
+
+    const isSelf = targetId === callerId;
+    const isAdmin = adminRoles.includes(req.user.role);
+
+    if (!isSelf && !isAdmin) {
+      logger.security('Unauthorized cross-user access attempt', {
+        callerId,
+        callerEmail: req.user.email,
+        callerRole: req.user.role,
+        targetId,
+        route: req.originalUrl,
+        ip: req.ip
+      });
+      return res.status(403).json({
+        error: 'Access forbidden',
+        message: 'You can only modify your own account'
+      });
+    }
+
+    next();
+  };
+};
+
 module.exports = {
   authenticateToken,
-  requireRole
+  requireRole,
+  requireSelfOrAdmin
 };

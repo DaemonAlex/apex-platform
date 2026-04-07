@@ -7,6 +7,153 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2026-04-07] - Production hardening: critical auth fixes, TLS, configurability
+
+**Branch:** `claude/code-review-docker-setup-FES9r`
+
+**Category:** Security / Configuration / Compliance
+
+**Severity/Impact:** **Critical** - closes multiple privilege-escalation and account-takeover vulnerabilities affecting all deployments (docker AND bare-metal). Required reading before the production deploy scheduled for the week of 2026-04-13.
+
+### Critical security fixes (vulnerabilities closed)
+
+#### 1. POST /api/auth/register - unauthenticated public registration with role escalation - **FIXED**
+
+- **Before:** Endpoint was unauthenticated and accepted a `role` field from the request body. Anyone reachable on the API could `POST /api/auth/register` with `{"role":"superadmin"}` and create themselves as an administrator.
+- **After:** Endpoint returns `404 {"error":"Not found","message":"Public registration is disabled."}`, logs the attempt as a security event in the audit log. First user created via `seed-admin.js`. All subsequent users created via the admin UI / `POST /api/users` (admin-only).
+
+#### 2. POST /api/users/:id/reset-password - account takeover for any user by any logged-in user - **FIXED**
+
+- **Before:** Endpoint had `authenticateToken` only - no role check. **Any logged-in user, including a `viewer` or `auditor`, could `POST /api/users/2/reset-password` and read the temporary password from the JSON response, then log in as user 2.** This was instant account takeover for every user in the system. The temp password was also generated with `Math.random()` (not cryptographically secure).
+- **After:** Gated to `requireRole(['admin','superadmin','owner'])`. Temp password generated with `crypto.randomBytes(12)`. Force-password-change-on-next-login is set. Returns `mustChangeOnLogin: true` and `expiresInDays: 7` in the response. Logged as a `security` audit event with target user, requesting admin, and IP.
+
+#### 3. POST /api/users - create-user with arbitrary role by any logged-in user - **FIXED**
+
+- **Before:** Any logged-in user could `POST /api/users` with `{"role":"superadmin"}` and create themselves a privileged account.
+- **After:** Gated to `requireRole(['admin','superadmin','owner'])`. 403 with audit log entry on attempt.
+
+#### 4. PUT /api/users/:id - role-change for any user by any logged-in user - **FIXED**
+
+- **Before:** Any logged-in user could `PUT /api/users/1` with `{"role":"viewer"}` and demote the only admin, locking everyone else out, or `PUT /api/users/SELF` with `{"role":"superadmin"}` to escalate their own privileges.
+- **After:** Gated to `requireRole(['admin','superadmin','owner'])`. 403 + audit log on attempt.
+
+#### 5. DELETE /api/users/:id - delete-any-user by any logged-in user - **FIXED**
+
+- **Before:** Any logged-in user could `DELETE /api/users/:id` and remove any other user from the system, including the only admin.
+- **After:** Gated to `requireRole(['admin','superadmin','owner'])`. 403 + audit log on attempt.
+
+#### 6. PUT /api/users/:id/password - change another user's password if you know their current one - **FIXED**
+
+- **Before:** No check that `req.user.userId === req.params.id`. A logged-in user who knew another user's current password could change their password.
+- **After:** Gated by `requireSelfOrAdmin('id')` middleware - user can change their own, admins can change anyone's.
+
+#### 7. PUT /api/users/:id/preferences and PUT/DELETE /api/users/:id/avatar - cross-user profile modification - **FIXED**
+
+- Same `requireSelfOrAdmin('id')` gate as #6.
+
+### Verification (ran end-to-end against fresh DB)
+
+| Test | Expected | Result |
+|---|---|---|
+| `POST /api/auth/register` (no auth) | 404 + audit log entry | 404 |
+| Viewer creates superadmin via `POST /api/users` | 403 | 403 |
+| Viewer changes admin role via `PUT /api/users/1` | 403 | 403 |
+| Viewer deletes admin via `DELETE /api/users/1` | 403 | 403 |
+| Viewer triggers admin password reset via `POST /api/users/1/reset-password` | 403 | 403 |
+| Viewer modifies admin preferences via `PUT /api/users/1/preferences` | 403 | 403 |
+| Viewer modifies own preferences via `PUT /api/users/2/preferences` | 200 | 200 |
+| Admin resets viewer password (legitimate flow) | 200 + crypto-random temp pw | 200 |
+| Admin login | 200 | 200 |
+| Admin creates viewer via `POST /api/users` | 201 | 201 |
+
+### TLS / Transport hardening
+
+#### 8. Global TLS 1.2 minimum for all outbound HTTPS
+
+- New: `tls.DEFAULT_MIN_VERSION = process.env.TLS_MIN_VERSION || 'TLSv1.2'` set at the very top of `node/server.js`, before any other module loads.
+- Applies to PostgreSQL TLS (when `DB_SSL=true`), Cisco Control Hub client, future integrations.
+- Configurable via `TLS_MIN_VERSION` env var. Defaults to `TLSv1.2`. Valid values: `TLSv1.2`, `TLSv1.3`.
+
+#### 9. PostgreSQL TLS support
+
+- `node/db.js` rewritten to support optional SSL/TLS to PostgreSQL via env vars:
+  - `DB_SSL=true|false` - enable TLS to the database (off by default for in-stack docker DB, **must be on for any external/managed PostgreSQL**)
+  - `DB_SSL_REJECT_UNAUTHORIZED=true|false` - verify server cert (default true)
+  - `DB_SSL_CA=/path/to/ca.pem` - CA cert file inside the container, required for managed DBs with private CAs (RDS, Azure DB, etc.)
+  - `DB_SSL_CERT`, `DB_SSL_KEY` - optional client certs for mutual TLS
+- Warns at startup if `DB_SSL=true` and `REJECT_UNAUTHORIZED=true` but no `DB_SSL_CA` is provided.
+- Connection pool tunable via `DB_POOL_MAX`, `DB_POOL_IDLE_MS`, `DB_CONNECT_TIMEOUT_MS`.
+- Logs `(ssl=on/off)` in the connect message so the operator can verify the negotiated state.
+
+#### 10. nginx security headers (docker/nginx.conf)
+
+- **Content-Security-Policy** locking down `default-src 'self'`, `object-src 'none'`, `frame-ancestors 'none'`, `base-uri 'self'`, `form-action 'self'`. Allows `'unsafe-inline'` on script-src/style-src for the existing inline scripts in `index.html` (refactor target for a follow-up release).
+- **Permissions-Policy** disabling camera, microphone, geolocation, payment, USB, and FLoC.
+- **X-Frame-Options DENY**, **X-Content-Type-Options nosniff**, **Referrer-Policy strict-origin-when-cross-origin**, **X-XSS-Protection 1; mode=block**.
+- **`server_tokens off`** to stop leaking nginx version.
+- **HSTS** included as a commented example - the `web` container speaks plain HTTP and is meant to sit behind an upstream TLS terminator. Uncomment the `Strict-Transport-Security` line if fronting the container directly with TLS.
+- **Important nginx gotcha addressed:** `add_header` directives in location blocks REPLACE all parent `add_header` directives instead of inheriting them. The first version of the security headers was set at the server level only, but every location had its own `add_header Cache-Control`, which silently dropped all security headers. Fixed by repeating the security headers in each static-content location block. Verified with `curl -sI` that all headers are now present on `/`, `/vue/`, and `/images/`.
+
+### Configurability for cross-environment deployment
+
+#### 11. .env.example rewritten as the canonical config reference
+
+- Every environment variable the app reads is now documented with its default and a comment explaining when to set it.
+- Sections: Database (required), Database connection pool, Database TLS, Auth, Initial admin bootstrap, Web tier, TLS minimum, Logging, Cisco.
+- Includes examples for managed PostgreSQL deployment (RDS / Azure DB / GCP).
+
+#### 12. docker-compose.yml passes through all configurable settings
+
+- New env vars wired through to the backend container: `LOG_LEVEL`, `TLS_MIN_VERSION`, `DB_HOST`, `DB_PORT`, `DB_POOL_MAX`, `DB_POOL_IDLE_MS`, `DB_CONNECT_TIMEOUT_MS`, `DB_SSL`, `DB_SSL_REJECT_UNAUTHORIZED`, `DB_SSL_CA`, `DB_SSL_CERT`, `DB_SSL_KEY`.
+- Volume mount example for an external CA cert directory included as a comment.
+- All values fall back to sensible defaults via `${VAR:-default}` so an existing `.env` continues to work without modification.
+
+#### 13. docker/README.md - new sections
+
+- **Configuration reference** - tables of every env var grouped by category (Required, Database, Auth and TLS, Web tier, Logging, Cisco), with defaults and descriptions.
+- **Connecting to an external/managed PostgreSQL** - step-by-step for pointing the backend at RDS / Azure DB / GCP Cloud SQL instead of the in-stack `db` container.
+- **Security model** - role matrix, what's locked down, what is NOT enforced by the docker stack itself (so the operator knows which controls are their responsibility).
+- Security checklist updated with: `DB_SSL=true` for external DBs, `TLS_MIN_VERSION=TLSv1.2` confirmed, and the two smoke-test commands (verify `/api/auth/register` returns 404, verify a non-admin user cannot escalate).
+
+### Production-readiness fixes
+
+#### 14. AuditLog table was never created - silent compliance failure - **FIXED**
+
+- Prior to this commit, the `auditlog` table was referenced by `node/middleware/audit.js`, `node/routes/audit.js`, and the security logger - but **never created anywhere in the codebase**. Every audit middleware write silently failed with `relation "auditlog" does not exist`. **All admin actions, security events, login attempts, and password changes were going to /dev/null.** This was a hard compliance gap.
+- Added `ensureAuditTable()` to `node/middleware/audit.js` which runs on module load with retry/backoff. Creates the table with the right schema and adds indexes on `timestamp DESC`, `category`, and `severity` for the audit log query patterns.
+- Verified end-to-end: ran the full security test suite, then checked `SELECT COUNT(*) FROM auditlog` - 12 rows, including all 6 unauthorized access attempts, 1 disabled-register attempt, 1 admin password reset (severity=critical), 1 successful login.
+
+#### 15. fieldops table was never created - silent feature failure - **FIXED**
+
+- Same root cause as #14. The `fieldops` table was referenced everywhere but never created. The `ensureFieldOpColumns()` migration tried to ALTER a non-existent table on every backend startup, logging `relation "fieldops" does not exist` and silently failing the field ops feature on a fresh DB.
+- Added `CREATE TABLE IF NOT EXISTS fieldops (...)` with the full base schema before the column migrations run. Added retry/backoff for the docker startup race.
+- Verified: backend startup log now shows `Field ops table and migrations ready` instead of `Field ops migration error`.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `node/routes/auth.js` | Removed open `POST /register` endpoint; replaced with 404 + audit log |
+| `node/routes/users.js` | Per-route role guards (`adminOnly` for create/update/delete/reset-password, `requireSelfOrAdmin('id')` for password/preferences/avatar). Admin reset-password now uses `crypto.randomBytes` |
+| `node/middleware/auth.js` | New `requireSelfOrAdmin(paramName)` helper. Logs unauthorized cross-user attempts as security events |
+| `node/middleware/audit.js` | New `ensureAuditTable()` with retry, runs on module load |
+| `node/routes/fieldops.js` | `ensureFieldOpColumns()` now creates the `fieldops` table before running column migrations, with retry |
+| `node/db.js` | Full SSL/TLS support via `DB_SSL_*` env vars, configurable connection pool, ssl=on/off in connect log |
+| `node/server.js` | `tls.DEFAULT_MIN_VERSION = TLSv1.2` set at top of file before any module loads |
+| `docker/nginx.conf` | CSP, Permissions-Policy, X-Frame-Options DENY, etc., repeated per-location to work around nginx add_header inheritance gotcha; `server_tokens off`; HSTS commented example |
+| `.env.example` | Rewritten as canonical config reference with all env vars documented |
+| `docker-compose.yml` | All new env vars wired through with defaults |
+| `docker/README.md` | New "Configuration reference", "Connecting to external PostgreSQL", and "Security model" sections; updated security checklist |
+| `CHANGELOG.md` | This entry |
+
+### Out of scope for this commit (acceptable post-release)
+
+- Refactor the 2 inline `<script>` blocks in `index.html` out to external files so the CSP can drop `'unsafe-inline'` on script-src.
+- Audit other route mounts (`/api/roles`, `/api/settings`, `/api/audit`) for similar role-check gaps. Initial review suggests these are admin-facing in the UI and likely OK, but a full pass should happen before the next release.
+- Move secrets out of `.env` files into Docker secrets / Vault / cloud secret stores for the corporate deployment.
+
+---
+
 ## [2026-04-07] - Docker Distribution
 
 **Branch:** `claude/code-review-docker-setup-FES9r`

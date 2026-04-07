@@ -181,68 +181,20 @@ router.post('/login',
   }
 });
 
-// Register endpoint (for testing)
-router.post('/register',
-  validate([
-    body('name').trim().notEmpty().withMessage('Name is required').isLength({ max: 255 }),
-    isValidEmail('email'),
-    body('password').notEmpty().withMessage('Password is required'),
-    body('role').optional().isIn(['auditor', 'viewer', 'field_ops', 'project_manager', 'admin', 'superadmin', 'owner']).withMessage('Invalid role')
-  ]),
-  auditLog('User registration', 'auth', 'info'),
-  async (req, res) => {
-  try {
-    const { name, email, password, role = 'auditor' } = req.body;
-
-    // Validate password requirements
-    const passwordValidation = validatePassword(password);
-    if (!passwordValidation.isValid) {
-      return res.status(400).json({
-        error: 'Password does not meet security requirements',
-        details: passwordValidation.errors
-      });
-    }
-
-    // Check if user exists
-    const existingUser = await pool.query('SELECT id FROM Users WHERE email = $1', [email]);
-
-    if (existingUser.rows.length > 0) {
-      return res.status(409).json({ error: 'User already exists' });
-    }
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 12);
-
-    // Calculate password expiration (60 days from now)
-    const passwordExpiresAt = new Date();
-    passwordExpiresAt.setDate(passwordExpiresAt.getDate() + 60);
-
-    // Create user
-    const result = await pool.query(`
-      INSERT INTO Users (name, email, password, role, password_changed_at, password_expires_at)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      RETURNING *
-    `, [name, email, hashedPassword, role, new Date(), passwordExpiresAt]);
-
-    const newUser = result.rows[0];
-
-    logger.info('User registered', { email: newUser.email, userId: newUser.id, role: newUser.role });
-
-    res.status(201).json({
-      message: 'User created successfully',
-      user: {
-        id: newUser.id,
-        name: newUser.name,
-        email: newUser.email,
-        role: newUser.role
-      }
-    });
-
-    // Connection pool kept open for reuse
-  } catch (error) {
-    logger.error('Register error', { error: error.message, ip: req.ip });
-    res.status(500).json({ error: 'Registration failed', details: error.message });
-  }
+// Public registration is disabled. The endpoint previously here accepted
+// `role` from the request body with no authentication, allowing anyone
+// reachable on the API to self-create as superadmin. Removed for the
+// 2026-04 production hardening pass.
+//
+// To create users:
+//   - First admin on a fresh deploy: `node seed-admin.js` (uses INITIAL_ADMIN_*)
+//   - Subsequent users: log in as admin and use POST /api/users (admin-only)
+router.post('/register', auditLog('Disabled register attempt', 'auth', 'warning'), (req, res) => {
+  logger.security('Attempt to use disabled /api/auth/register', { ip: req.ip });
+  return res.status(404).json({
+    error: 'Not found',
+    message: 'Public registration is disabled. Contact your administrator.'
+  });
 });
 
 // Request password reset
