@@ -19,6 +19,7 @@ RUN apk add --no-cache wget \
 # App shell + static assets
 COPY index.html /usr/share/nginx/html/index.html
 COPY images/ /usr/share/nginx/html/images/
+COPY js/ /usr/share/nginx/html/js/
 COPY --from=client-build /src/vue/ /usr/share/nginx/html/vue/
 
 # nginx config (proxies /api -> backend service)

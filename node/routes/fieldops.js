@@ -2,7 +2,18 @@ const express = require('express');
 const { pool } = require('../db');
 const logger = require('../utils/logger');
 const { auditLog } = require('../middleware/audit');
+const { requireRole } = require('../middleware/auth');
 const router = express.Router();
+
+// Reads open to all logged-in users so auditors can see field op state.
+// Mutations require writer role. Prior to 2026-04 any logged-in user could
+// create field ops jobs, mark them complete, or update vendor info.
+const writers = ['admin', 'superadmin', 'owner', 'project_manager', 'field_ops'];
+const writerGate = requireRole(writers);
+router.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  return writerGate(req, res, next);
+});
 
 // Auto-migration: ensure fieldops table exists, then add any newer columns.
 // Prior to 2026-04 the table itself was assumed to exist somewhere else

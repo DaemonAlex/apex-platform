@@ -1,7 +1,15 @@
 const express = require('express');
 const { pool } = require('../db');
 const { auditLog } = require('../middleware/audit');
+const { requireRole } = require('../middleware/auth');
 const router = express.Router();
+
+// Reads stay open to all logged-in users (the frontend needs business
+// lines, project prefix, etc., to render forms). Writes are admin-only.
+// Prior to 2026-04 the catch-all `PUT /:key` had no role check, so any
+// logged-in viewer could write arbitrary AppConfig keys including the
+// project_id_prefix that the WTB_ filter relies on.
+const adminOnly = requireRole(['admin', 'superadmin', 'owner']);
 
 // Ensure AppConfig table exists
 async function ensureConfigTable() {
@@ -38,8 +46,8 @@ router.get('/business-lines', async (req, res) => {
   }
 });
 
-// PUT /api/settings/business-lines - Update business lines
-router.put('/business-lines', auditLog('Business lines updated', 'admin', 'info'), async (req, res) => {
+// PUT /api/settings/business-lines - Update business lines (admin only)
+router.put('/business-lines', adminOnly, auditLog('Business lines updated', 'admin', 'info'), async (req, res) => {
   try {
     const { businessLines } = req.body;
     if (!Array.isArray(businessLines)) return res.status(400).json({ error: 'businessLines must be an array' });
@@ -64,8 +72,8 @@ router.get('/project-prefix', async (req, res) => {
   }
 });
 
-// PUT /api/settings/project-prefix - Update prefix
-router.put('/project-prefix', auditLog('Project prefix updated', 'admin', 'info'), async (req, res) => {
+// PUT /api/settings/project-prefix - Update prefix (admin only)
+router.put('/project-prefix', adminOnly, auditLog('Project prefix updated', 'admin', 'info'), async (req, res) => {
   try {
     const { prefix } = req.body;
     if (!prefix || typeof prefix !== 'string') return res.status(400).json({ error: 'prefix is required' });
@@ -79,8 +87,10 @@ router.put('/project-prefix', auditLog('Project prefix updated', 'admin', 'info'
   }
 });
 
-// PUT /api/settings/:key - Generic config update
-router.put('/:key', auditLog('Setting updated', 'admin', 'info'), async (req, res) => {
+// PUT /api/settings/:key - Generic config update (admin only - this is the
+// catch-all that lets admins write any AppConfig key. Must NOT be reachable
+// by non-admin users or the entire app config is forge-able.)
+router.put('/:key', adminOnly, auditLog('Setting updated', 'admin', 'info'), async (req, res) => {
   try {
     const { value } = req.body;
     await pool.query(

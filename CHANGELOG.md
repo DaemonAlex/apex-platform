@@ -7,6 +7,170 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2026-04-07] - Release-state follow-ups: full route audit, CSP tightening, Docker secrets
+
+**Branch:** `main`
+
+**Category:** Security / Hardening / Configuration
+
+**Severity/Impact:** **High** - closes 9 additional privilege-escalation vulnerabilities found during the comprehensive route audit, removes the last `'unsafe-inline'` from the script-src CSP, and adds production-grade secret management. All deployments (docker AND bare-metal) need this before release.
+
+### Comprehensive route audit: 9 more vulnerabilities closed
+
+A full audit of every Express route mount turned up gaps in 4 more route files beyond the `/api/users` issues already fixed in the prior commit. **Every one of these was reachable by any logged-in user, including a `viewer`.**
+
+#### /api/roles - role manipulation by any logged-in user
+
+- **`POST /api/roles`** - any user could create roles with arbitrary `permissions: ['*']` (foundational for future privilege escalation if perms become enforced).
+- **`PUT /api/roles/:id`** - any user could modify role definitions, including renaming.
+- **`DELETE /api/roles/:id`** - any user could delete non-system roles, breaking users assigned to them.
+- **Fix:** All three gated to `requireRole(['admin', 'superadmin', 'owner'])`. Reads stay open so the frontend can populate role pickers.
+
+#### /api/settings - app config tampering by any logged-in user
+
+- **`PUT /api/settings/business-lines`** - any user could rewrite the business line list.
+- **`PUT /api/settings/project-prefix`** - any user could change the `project_id_prefix` config key, which **breaks the WTB_ filter** in `routes/projects.js` (`WHERE id LIKE 'WTB_%'`) and would hide all existing projects.
+- **`PUT /api/settings/:key`** - **catch-all that lets any logged-in user write any AppConfig key with any value**. This was the worst of the three because it accepted arbitrary keys.
+- **Fix:** All three gated to admin/superadmin/owner. Reads stay open.
+
+#### /api/audit/log - audit log forgery and information disclosure
+
+- **`POST /api/audit/log`** - any user could plant fake audit entries with `user: "admin@apex.local"` to claim an admin did things they didn't do. **Anti-forensics nightmare** - hides real attacker activity from the very system designed to detect it.
+- **`GET /api/audit/log`** - any user could read the entire audit log including security events, IPs, login times.
+- **Fix:** POST gated to admin only AND now ignores the `user` field from the request body entirely - always uses `req.user.email` from the authenticated session. IP is always taken from the request, never the body. GET gated to admin OR auditor (the `auditor` role exists specifically for read-only audit access per `DEFAULT_ROLES`).
+
+#### /api/users/:id/reset-password (already fixed in prior commit, also re-verified)
+
+- Used `Math.random()` for the temp password (not cryptographically secure). Replaced with `crypto.randomBytes(12)`.
+
+### Data route writer-gate middleware (10 routers)
+
+The data route mounts (`/api/projects`, `/api/attachments`, `/api/room-status`, `/api/fieldops`, `/api/contacts`, `/api/meetings`, `/api/documents`, `/api/vendors`, `/api/cisco`) all had only `authenticateToken` at the mount level - no role check on writes. **Any logged-in user could create/modify/delete any project, room, task attachment, vendor, contact, meeting, or document.**
+
+Each router file now has a `router.use()` middleware at the top that:
+
+- Allows GET/HEAD/OPTIONS through for all logged-in users (reads stay open so auditors and viewers can see the data)
+- Gates POST/PUT/PATCH/DELETE to a writer role list: `['admin', 'superadmin', 'owner', 'project_manager', 'field_ops']`
+
+`/api/cisco` is a special case - the gate is stricter because it controls live network infrastructure (the `POST /api/cisco/devices/:id/command` endpoint pushes commands to real Webex devices in the org). Reads on `/api/cisco/*` are gated to `[admin, superadmin, owner, project_manager, field_ops, auditor]` (everyone except `viewer`); writes are gated to `[admin, superadmin, owner]` only.
+
+`/api/reports` was left unchanged - it has zero mutation endpoints (verified by `grep router.(post|put|patch|delete)`), so the existing `authenticateToken`-only mount is fine.
+
+### Schema fixes for production readiness
+
+#### `column "limited_functionality" does not exist` - fresh DB 500
+
+`GET /api/room-status` SELECT'd `h.limited_functionality` and `h.non_functional_reason` from `RoomCheckHistory`, but the CREATE TABLE in `ensureRoomTables()` and the column-migration loop only added `issue_found`, `issue_description`, `ticket_number`. **Any fresh deployment 500'd on the very first room-status read.** Extended the migration loop to add the two missing columns. Verified end-to-end: `GET /api/room-status` now returns 200 on the demo stack.
+
+#### /api/migrate role list inconsistency
+
+`/api/migrate` was gated to `['admin', 'superadmin']` only, missing `owner`. Other admin-only mounts use `['admin', 'superadmin', 'owner']`. Fixed for consistency.
+
+### CSP tightening: dropped 'unsafe-inline' from script-src
+
+The previous CSP allowed `'unsafe-inline'` on script-src because `index.html` had 2 inline `<script>` blocks. Both blocks were extracted to external files:
+
+- `js/brand-config.js` (840 bytes) - branding constants and the DOMContentLoaded handler
+- `js/legacy-monolith.js` (72 KB / 1659 lines) - everything left of the vanilla JS monolith after the Vue 3 migration: app shell glue, theme toggle, configurable settings cache, project phase definitions, AppState, navigation, audit logging helpers, authentication, apiFetch helper
+
+`index.html` now has 3 `<script src="...">` references and zero inline `<script>` blocks. CSP `script-src` is now: `'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://cdn.sheetjs.com https://unpkg.com` - no `'unsafe-inline'`.
+
+`Dockerfile.web` updated with `COPY js/ /usr/share/nginx/html/js/` so the new directory ships in the image.
+
+### Docker secrets / file-based secret support
+
+New `node/utils/secrets.js` exports `loadSecretsFromFiles()` which implements the standard `${VAR}_FILE` convention used by official postgres / mysql / redis docker images:
+
+- For each sensitive env var (`DB_PASSWORD`, `JWT_SECRET`, `INITIAL_ADMIN_PASSWORD`, `CISCO_CLIENT_SECRET`, `CISCO_PERSONAL_TOKEN`), checks for a `*_FILE` companion env var
+- If set and the plain env var is empty, reads the file content into the env var
+- Warns if both are set (uses the plain env var, ignores the file)
+- Exits with `CRITICAL` if the file path is set but unreadable
+
+Called at the very top of `node/server.js` and `node/seed-admin.js` before any other module that reads these env vars.
+
+New `docker-compose.secrets.yml` overlay provides a ready-to-use example for production deployments that prefer file-mounted secrets over `.env`. Supports Docker secrets, k8s projected volumes, Vault file-mode templates, AWS Secrets Manager via `secrets-store-csi-driver`, etc.
+
+`docker/README.md` gains a "Docker secrets / file-based secrets" section with end-to-end setup instructions.
+
+### Audit table forgery protection (POST /api/audit/log handler)
+
+Beyond the role gate, the handler now ignores the `user` and `ipAddress` fields from the request body entirely. The user is always `req.user?.email` from the authenticated session and the IP is always `req.ip` from the request. An admin (or anyone else) cannot use this endpoint to plant entries claiming someone else did something.
+
+### Test infrastructure (`docker-compose.test.yml`)
+
+Added a parallel-test compose overlay for cases where a separate test stack is needed (different port, different image tags, isolated volumes). Not used in normal development - the demo stack on port 8090 IS the dev/test target. Kept in the tree for future use cases that need isolation.
+
+### Verification (full automated suite, ran against the demo stack)
+
+All 23 of 23 security checks passing:
+
+```
+PASS: public POST /api/auth/register                              -> 404
+PASS: viewer POST /api/users (superadmin escalation)              -> 403
+PASS: viewer PUT /api/users/1 (admin role change)                 -> 403
+PASS: viewer DELETE /api/users/1                                  -> 403
+PASS: viewer POST /api/users/1/reset-password                     -> 403
+PASS: viewer PUT /api/users/1/preferences (cross-user)            -> 403
+PASS: viewer PUT /api/users/<self>/preferences                    -> 200
+PASS: viewer POST /api/roles                                      -> 403
+PASS: viewer PUT /api/settings/arbitrary_key                      -> 403
+PASS: viewer POST /api/audit/log forge                            -> 403
+PASS: viewer GET /api/audit/log                                   -> 403
+PASS: admin GET /api/audit/log                                    -> 200
+PASS: viewer POST /api/projects                                   -> 403
+PASS: viewer POST /api/room-status                                -> 403
+PASS: viewer POST /api/fieldops                                   -> 403
+PASS: viewer POST /api/contacts                                   -> 403
+PASS: viewer POST /api/meetings                                   -> 403
+PASS: viewer POST /api/vendors                                    -> 403
+PASS: viewer POST /api/cisco/devices/x/command                    -> 403
+PASS: viewer GET /api/projects                                    -> 200
+PASS: admin GET /api/room-status (was 500, fixed)                 -> 200
+PASS: viewer GET /api/room-status                                 -> 200
+PASS: viewer GET /api/reports/portfolio                           -> 200
+```
+
+Plus:
+
+- secrets.js unit test: `JWT_SECRET_FILE=/tmp/test_secret.txt` correctly loads value into `process.env.JWT_SECRET`
+- nginx CSP `script-src` no longer contains `'unsafe-inline'`
+- `/js/brand-config.js` and `/js/legacy-monolith.js` served byte-perfect from the image (840 + 72885 bytes match source files exactly)
+- `node -c` syntax check passes on all 20 modified backend JS files
+- Backend startup log clean: `Audit log table ready`, `Field ops table and migrations ready`, `Connected to PostgreSQL database (ssl=off)` x3, no error logs
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `node/utils/secrets.js` | NEW: `${VAR}_FILE` resolution helper |
+| `node/server.js` | Calls `loadSecretsFromFiles()` before any other require |
+| `node/seed-admin.js` | Calls `loadSecretsFromFiles()` before db.js |
+| `node/routes/auth.js` | (already in prior commit) |
+| `node/routes/users.js` | (already in prior commit) |
+| `node/routes/roles.js` | Per-route admin gate on POST/PUT/DELETE |
+| `node/routes/settings.js` | Per-route admin gate on all PUT incl. catchall `/:key` |
+| `node/routes/audit.js` | POST gated to admin + ignores body `user`/`ipAddress`; GET gated to admin or auditor |
+| `node/routes/projects.js` | Writer-gate middleware (allows GET, gates POST/PUT/PATCH/DELETE) |
+| `node/routes/attachments.js` | Writer-gate middleware |
+| `node/routes/room-status.js` | Writer-gate middleware + missing column migration |
+| `node/routes/fieldops.js` | Writer-gate middleware |
+| `node/routes/contacts.js` | Writer-gate middleware |
+| `node/routes/meetings.js` | Writer-gate middleware |
+| `node/routes/documents.js` | Writer-gate middleware |
+| `node/routes/vendors.js` | Writer-gate middleware |
+| `node/routes/cisco.js` | Reader gate (everyone but viewer) + admin-only writes |
+| `node/server.js` | `/api/migrate` mount role list now consistent with rest |
+| `index.html` | 2 inline scripts replaced with `<script src="...">` references |
+| `js/brand-config.js` | NEW: extracted from index.html |
+| `js/legacy-monolith.js` | NEW: extracted from index.html (1659 lines) |
+| `docker/Dockerfile.web` | `COPY js/ /usr/share/nginx/html/js/` |
+| `docker/nginx.conf` | Dropped `'unsafe-inline'` from CSP `script-src` |
+| `docker/README.md` | New "Docker secrets / file-based secrets" section |
+| `docker-compose.secrets.yml` | NEW: production secrets overlay example |
+| `docker-compose.test.yml` | NEW: parallel-test overlay for cases that need isolation |
+
+---
+
 ## [2026-04-07] - Production hardening: critical auth fixes, TLS, configurability
 
 **Branch:** `claude/code-review-docker-setup-FES9r`

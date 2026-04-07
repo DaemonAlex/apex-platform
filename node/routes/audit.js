@@ -2,13 +2,31 @@ const express = require('express');
 const { pool } = require('../db');
 const logger = require('../utils/logger');
 const { validate, body, query, isPositiveInt } = require('../middleware/validate');
+const { requireRole } = require('../middleware/auth');
 const router = express.Router();
 
-// Create audit log entry
+// POST /log is admin-only. The audit middleware in middleware/audit.js
+// writes to the AuditLog table directly via the pool, bypassing this
+// endpoint, so server-side audit logging is unaffected. This endpoint
+// exists for any frontend code that wants to log a custom event - prior
+// to 2026-04 it accepted `user` from the request body, so any logged-in
+// viewer could plant fake audit entries claiming an admin did things they
+// didn't do (anti-forensics). Now restricted to admins.
+const adminOnly = requireRole(['admin', 'superadmin', 'owner']);
+
+// GET /log is admin OR auditor. The 'auditor' role exists specifically
+// for read-only audit log access (see DEFAULT_ROLES in routes/roles.js).
+const adminOrAuditor = requireRole(['admin', 'superadmin', 'owner', 'auditor']);
+
+// Create audit log entry (admin only - prevents log forgery).
+// The `user` field is ALWAYS taken from the authenticated session, never
+// from the request body. The IP is ALWAYS taken from the request, never
+// from the body. This prevents an admin (or anyone else) from planting
+// fake audit entries claiming someone else did something they didn't.
 router.post('/log',
+  adminOnly,
   validate([
     body('action').notEmpty().withMessage('Action is required').isLength({ max: 500 }),
-    body('user').optional().trim().isLength({ max: 255 }),
     body('resource').optional().trim().isLength({ max: 500 }),
     body('details').optional().trim().isLength({ max: 5000 }),
     body('projectId').optional().trim().isLength({ max: 50 }),
@@ -19,25 +37,24 @@ router.post('/log',
   async (req, res) => {
   try {
     const {
-      user,
       action,
       resource,
       details,
       projectId,
       taskId,
       category = 'general',
-      severity = 'info',
-      ipAddress = req.ip || '127.0.0.1'
+      severity = 'info'
     } = req.body;
 
-    // Insert audit log entry
+    // Insert audit log entry. user and ipAddress come from the
+    // authenticated session, not the request body.
     await pool.query(`
       INSERT INTO AuditLog (id, timestamp, "user", action, resource, details, projectId, taskId, category, severity, ipAddress, created_at)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
     `, [
       `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       new Date(),
-      user || 'System',
+      req.user?.email || `userId:${req.user?.userId}` || 'unknown',
       action,
       resource || '',
       details || '',
@@ -45,20 +62,20 @@ router.post('/log',
       taskId || null,
       category,
       severity,
-      ipAddress
+      req.ip || '127.0.0.1'
     ]);
 
     res.json({ message: 'Audit log entry created successfully' });
 
-    // Connection pool kept open for reuse
   } catch (error) {
     logger.error('Audit log error', { error: error.message });
     res.status(500).json({ error: 'Failed to create audit log entry', details: error.message });
   }
 });
 
-// Get audit log entries - ASRB 5.1.3: parameterized offset/limit + total count
+// Get audit log entries (admin or auditor) - ASRB 5.1.3: parameterized offset/limit + total count
 router.get('/log',
+  adminOrAuditor,
   validate([
     isPositiveInt('limit', 'query'),
     isPositiveInt('offset', 'query'),

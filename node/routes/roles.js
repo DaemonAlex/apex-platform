@@ -3,7 +3,15 @@ const { pool } = require('../db');
 const logger = require('../utils/logger');
 const { auditLog } = require('../middleware/audit');
 const { validate, body, param } = require('../middleware/validate');
+const { requireRole } = require('../middleware/auth');
 const router = express.Router();
+
+// Mutation endpoints in this file are admin-only. Reads are intentionally
+// open to all logged-in users so the frontend can populate role pickers
+// in user-edit dialogs. Prior to 2026-04 the mutation endpoints had no
+// role check at all, so any logged-in user could create / modify / delete
+// roles, including system roles in the case of update.
+const adminOnly = requireRole(['admin', 'superadmin', 'owner']);
 
 // Default roles seeded on first run
 const DEFAULT_ROLES = [
@@ -121,8 +129,9 @@ router.get('/permissions', async (req, res) => {
   }
 });
 
-// Create new role
+// Create new role (admin only)
 router.post('/',
+  adminOnly,
   validate([
     body('name').trim().notEmpty().withMessage('Name is required').matches(/^[a-zA-Z0-9_]+$/).withMessage('Name must be alphanumeric with underscores'),
     body('displayName').trim().notEmpty().withMessage('Display name is required').isLength({ min: 1, max: 100 }).withMessage('Display name must be 1-100 characters')
@@ -165,8 +174,9 @@ router.post('/',
   }
 });
 
-// Update role
+// Update role (admin only)
 router.put('/:id',
+  adminOnly,
   validate([
     body('name').trim().notEmpty().withMessage('Name is required').matches(/^[a-zA-Z0-9_]+$/).withMessage('Name must be alphanumeric with underscores'),
     body('displayName').trim().notEmpty().withMessage('Display name is required').isLength({ min: 1, max: 100 }).withMessage('Display name must be 1-100 characters')
@@ -225,8 +235,8 @@ router.put('/:id',
   }
 });
 
-// Delete role
-router.delete('/:id', auditLog('Role deleted', 'admin', 'warning'), async (req, res) => {
+// Delete role (admin only)
+router.delete('/:id', adminOnly, auditLog('Role deleted', 'admin', 'warning'), async (req, res) => {
   try {
     if (!rolesTableReady) { await ensureRolesTable(); rolesTableReady = true; }
     const roleId = req.params.id;

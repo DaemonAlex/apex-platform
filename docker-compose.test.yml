@@ -1,0 +1,28 @@
+# Test overlay - parallel stack for verification work, isolated from the
+# live dev/demo stack so rebuilding does not replace the running images.
+#
+# Usage (always pass WEB_PORT=8091 to avoid colliding with the demo stack):
+#   WEB_PORT=8091 docker compose -f docker-compose.yml -f docker-compose.test.yml -p apex-test build
+#   WEB_PORT=8091 docker compose -f docker-compose.yml -f docker-compose.test.yml -p apex-test up -d
+#   WEB_PORT=8091 docker compose -f docker-compose.yml -f docker-compose.test.yml -p apex-test down -v
+#
+# Differences from the main compose file:
+#   - Container names get a `-test` suffix to avoid collision with the demo stack
+#   - Images tagged `:test` so the `:latest` tag the demo stack uses is never overwritten
+#   - Volumes are project-scoped via `-p apex-test` so test data does not leak
+#   - WEB_PORT must be set to 8091 (or any free port) via env, since compose v2
+#     merges (rather than replaces) list-typed `ports:` fields - overriding here
+#     would result in both 8090 and 8091 being bound, which conflicts with the
+#     demo stack
+
+services:
+  db:
+    container_name: apex-db-test
+
+  backend:
+    image: apex-backend:test
+    container_name: apex-backend-test
+
+  web:
+    image: apex-web:test
+    container_name: apex-web-test

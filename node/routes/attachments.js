@@ -3,9 +3,20 @@ const router = express.Router();
 const multer = require('multer');
 const logger = require('../utils/logger');
 const { auditLog } = require('../middleware/audit');
+const { requireRole } = require('../middleware/auth');
 const path = require('path');
 const fs = require('fs').promises;
 const jwt = require('jsonwebtoken');
+
+// Writers can upload and delete task attachments. Auditors and viewers
+// can still GET attachments to view them. Prior to 2026-04 any logged-in
+// user could upload or delete any attachment.
+const writers = ['admin', 'superadmin', 'owner', 'project_manager', 'field_ops'];
+const writerGate = requireRole(writers);
+router.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  return writerGate(req, res, next);
+});
 
 // Validate JWT_SECRET is set
 if (!process.env.JWT_SECRET) {

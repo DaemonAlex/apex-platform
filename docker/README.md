@@ -432,8 +432,41 @@ container:
   to only talk to specific CIDRs (DB host, Cisco API, internal services),
   enforce that at the host firewall or in your container network.
 - **Secrets storage.** `.env` is a plain file on the host. For production
-  consider Docker secrets, Vault, AWS Secrets Manager, etc., and pass values
-  in via the environment.
+  prefer file-based secrets via the `${VAR}_FILE` convention - see the
+  "Docker secrets / file-based secrets" section below for the supported
+  variables and a ready-to-use compose overlay.
+
+### Docker secrets / file-based secrets
+
+For production deployments that should not store secrets in `.env`, the
+backend supports the standard `${VAR}_FILE` convention. Set
+`DB_PASSWORD_FILE`, `JWT_SECRET_FILE`, `INITIAL_ADMIN_PASSWORD_FILE`,
+`CISCO_CLIENT_SECRET_FILE`, or `CISCO_PERSONAL_TOKEN_FILE` to a path
+containing the secret value, leave the plain env var empty, and the
+backend resolves the file content into the env var on startup
+(`node/utils/secrets.js`). This is the same pattern used by official
+postgres / mysql / redis docker images.
+
+A ready-to-use overlay is provided at `docker-compose.secrets.yml`:
+
+```bash
+# Create secret files (mode 0600, owned by root)
+mkdir -p ./secrets && chmod 700 ./secrets
+openssl rand -base64 24 > ./secrets/db_password.txt
+openssl rand -base64 48 > ./secrets/jwt_secret.txt
+printf 'YourBootstrapPassword!2026' > ./secrets/initial_admin_password.txt
+chmod 600 ./secrets/*.txt
+
+# Remove or empty DB_PASSWORD, JWT_SECRET, INITIAL_ADMIN_PASSWORD in .env
+
+# Bring up with both files - the secrets overlay adds the file mounts and
+# the *_FILE env vars
+docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d
+```
+
+For Vault / AWS Secrets Manager / Azure Key Vault / k8s secrets, mount the
+secret value as a file via your orchestration layer and point the same
+`*_FILE` env var at the mount path. The backend handles the rest.
 
 ---
 

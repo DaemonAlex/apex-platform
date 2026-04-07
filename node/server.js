@@ -1,3 +1,10 @@
+// Resolve Docker secrets / file-based secrets BEFORE anything reads them.
+// Any sensitive env var named e.g. DB_PASSWORD can be supplied via a
+// DB_PASSWORD_FILE companion pointing at a file (the standard pattern for
+// docker-compose `secrets:` blocks, Vault file mounts, etc).
+const { loadSecretsFromFiles } = require('./utils/secrets');
+loadSecretsFromFiles();
+
 // Enforce TLS 1.2 minimum for ALL outbound HTTPS made by this process,
 // before anything else loads. This applies to the Cisco Control Hub client,
 // the Drizzle/pg PostgreSQL connection (when DB_SSL is on), nodemailer,
@@ -120,7 +127,7 @@ app.use('/api/settings', authenticateToken, settingsRoutes);
 app.use('/api/audit', authenticateToken, auditRoutes);
 app.use('/api/admin', authenticateToken, requireRole(['admin', 'superadmin', 'owner']), adminRoutes);
 app.use('/api/attachments', authenticateToken, attachmentsRoutes);
-app.use('/api/migrate', authenticateToken, requireRole(['admin', 'superadmin']), loadSampleRoutes);
+app.use('/api/migrate', authenticateToken, requireRole(['admin', 'superadmin', 'owner']), loadSampleRoutes);
 app.use('/api/room-status', authenticateToken, roomStatusRoutes);
 app.use('/api/fieldops', authenticateToken, fieldopsRoutes);
 app.use('/api/reports', authenticateToken, reportsRoutes);

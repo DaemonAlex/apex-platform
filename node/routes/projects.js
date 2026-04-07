@@ -3,7 +3,20 @@ const { pool } = require('../db');
 const logger = require('../utils/logger');
 const { auditLog } = require('../middleware/audit');
 const { validate, body, param } = require('../middleware/validate');
+const { requireRole } = require('../middleware/auth');
 const router = express.Router();
+
+// Reads (GET/HEAD/OPTIONS) are open to all logged-in users so auditors and
+// viewers can see project data. Mutations (POST/PUT/PATCH/DELETE) require a
+// writer role. Prior to 2026-04 this entire router was open to any logged-in
+// user, so a viewer could create/modify/delete projects, tasks, notes,
+// site visits, and project-room links.
+const writers = ['admin', 'superadmin', 'owner', 'project_manager', 'field_ops'];
+const writerGate = requireRole(writers);
+router.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  return writerGate(req, res, next);
+});
 
 // Map PostgreSQL lowercase columns to camelCase for frontend compatibility
 function mapProjectRow(row) {

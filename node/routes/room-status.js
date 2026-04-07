@@ -3,7 +3,20 @@ const { pool } = require('../db');
 const logger = require('../utils/logger');
 const { auditLog } = require('../middleware/audit');
 const { validate, body } = require('../middleware/validate');
+const { requireRole } = require('../middleware/auth');
 const router = express.Router();
+
+// Reads open to all logged-in users (auditors need to see room state).
+// Writes (room CRUD, location CRUD, equipment, standards, checks, tech
+// details, room documents) require a writer role. Prior to 2026-04 a
+// logged-in viewer could create/modify/delete any room, equipment, or
+// document.
+const writers = ['admin', 'superadmin', 'owner', 'project_manager', 'field_ops'];
+const writerGate = requireRole(writers);
+router.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  return writerGate(req, res, next);
+});
 
 // Ensure all room tables exist (auto-migration)
 async function ensureRoomTables() {
@@ -99,11 +112,17 @@ async function ensureRoomTables() {
     )
   `);
 
-  // Add new columns to existing check history table
+  // Add new columns to existing check history table.
+  // limited_functionality and non_functional_reason were added by the SELECT
+  // in GET /api/room-status but never added to the schema, so a fresh DB or
+  // any DB that didn't go through a manual migration would 500 on the very
+  // first room-status read. Fixed in 2026-04 by adding them here.
   for (const col of [
     { name: 'issue_found', type: 'BOOLEAN DEFAULT FALSE' },
     { name: 'issue_description', type: 'TEXT' },
-    { name: 'ticket_number', type: 'VARCHAR(100)' }
+    { name: 'ticket_number', type: 'VARCHAR(100)' },
+    { name: 'limited_functionality', type: 'BOOLEAN DEFAULT FALSE' },
+    { name: 'non_functional_reason', type: 'TEXT' }
   ]) {
     await pool.query(`ALTER TABLE RoomCheckHistory ADD COLUMN IF NOT EXISTS ${col.name} ${col.type}`).catch(() => {});
   }

@@ -2,7 +2,18 @@ const express = require('express');
 const { pool } = require('../db');
 const logger = require('../utils/logger');
 const { auditLog } = require('../middleware/audit');
+const { requireRole } = require('../middleware/auth');
 const router = express.Router();
+
+// Reads open to all logged-in users; writes (contact CRUD, project
+// assignments) require writer role. Prior to 2026-04 any logged-in user
+// could create/modify/delete contacts and reassign them between projects.
+const writers = ['admin', 'superadmin', 'owner', 'project_manager', 'field_ops'];
+const writerGate = requireRole(writers);
+router.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  return writerGate(req, res, next);
+});
 
 // Contact types: internal, vendor, gc, architect, oac_rep, consultant, client
 const VALID_TYPES = ['internal', 'vendor', 'gc', 'architect', 'oac_rep', 'consultant', 'client'];

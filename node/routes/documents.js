@@ -2,10 +2,21 @@ const express = require('express');
 const { pool } = require('../db');
 const logger = require('../utils/logger');
 const { auditLog } = require('../middleware/audit');
+const { requireRole } = require('../middleware/auth');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs').promises;
 const router = express.Router();
+
+// Reads (downloads) open to all logged-in users; uploads/deletes require
+// writer role. Prior to 2026-04 any logged-in user could upload arbitrary
+// files to any project or delete project documents.
+const writers = ['admin', 'superadmin', 'owner', 'project_manager', 'field_ops'];
+const writerGate = requireRole(writers);
+router.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  return writerGate(req, res, next);
+});
 
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads', 'documents');
 

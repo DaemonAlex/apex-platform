@@ -24,6 +24,8 @@
  */
 
 require('dotenv').config();
+const { loadSecretsFromFiles } = require('./utils/secrets');
+loadSecretsFromFiles();
 const bcrypt = require('bcryptjs');
 const { pool } = require('./db');
 

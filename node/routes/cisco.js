@@ -2,8 +2,27 @@ const express = require('express');
 const { pool } = require('../db');
 const logger = require('../utils/logger');
 const cisco = require('../services/ciscoClient');
+const { requireRole } = require('../middleware/auth');
 
 const router = express.Router();
+
+// Cisco Control Hub talks to live network infrastructure (devices, workspaces,
+// schedules). Reads (status, device list, etc.) are open to writers and above
+// because field ops and project managers need to see device state. Mutations
+// (POST/PUT/PATCH/DELETE) require admin since they push device commands and
+// configuration changes to real hardware. Prior to 2026-04 any logged-in
+// user could call POST /api/cisco/devices/:id/command and execute arbitrary
+// commands on Webex devices in the org.
+const ciscoReaders = ['admin', 'superadmin', 'owner', 'project_manager', 'field_ops', 'auditor'];
+const ciscoAdmins = ['admin', 'superadmin', 'owner'];
+const readerGate = requireRole(ciscoReaders);
+const adminGate = requireRole(ciscoAdmins);
+router.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
+    return readerGate(req, res, next);
+  }
+  return adminGate(req, res, next);
+});
 
 async function ensureCiscoTables() {
   await pool.query(`
