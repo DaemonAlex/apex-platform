@@ -52,7 +52,28 @@ PostgreSQL 16 (port 5432) <-- Express API
 
 ---
 
-## Quick Start
+## Quick Start (Docker)
+
+The fastest way to run APEX on a Linux server. The repo ships a complete
+three-container stack (PostgreSQL 16, Express backend, nginx web tier).
+
+```bash
+git clone https://github.com/DaemonAlex/apex-platform.git
+cd apex-platform
+cp .env.example .env
+# Edit .env: set DB_PASSWORD, JWT_SECRET, INITIAL_ADMIN_EMAIL, INITIAL_ADMIN_PASSWORD
+docker compose build
+docker compose up -d
+docker compose exec backend node seed-admin.js
+```
+
+Open `http://<host>:8080`. Full instructions, including air-gapped install,
+backup/restore, TLS termination, and a security checklist, are in
+[`docker/README.md`](docker/README.md).
+
+---
+
+## Quick Start (Bare Metal)
 
 ### Prerequisites
 

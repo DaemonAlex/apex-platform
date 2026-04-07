@@ -1,18 +1,37 @@
 .git
 .gitignore
+
+# Secrets - exclude at any depth (root .env AND node/.env etc.)
 .env
 .env.*
+**/.env
+**/.env.*
+
+# Dependencies and build output
 **/node_modules
 **/.DS_Store
 **/*.log
+client/dist
+
+# Local data that must never ship in an image
 backups/
 node/backups/
 node/logs/
 node/uploads/
 uploads/
-client/dist
+
+# Tests and dev-only utilities (not needed at runtime, reduce attack surface)
+**/tests/
+**/__tests__/
+**/*.test.js
+node/check-reports.js
+node/seed-fieldops.sql
+
+# Editor / IDE
+.vscode
+.idea
+
+# Markdown - exclude all except the two READMEs we want shipped
 *.md
 !README.md
 !docker/README.md
-.vscode
-.idea

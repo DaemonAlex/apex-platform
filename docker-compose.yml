@@ -42,6 +42,10 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
+      # Initial admin bootstrap (consumed by node seed-admin.js, not server.js)
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
+      INITIAL_ADMIN_NAME: ${INITIAL_ADMIN_NAME:-APEX Administrator}
       # Optional Cisco Control Hub integration
       CISCO_CLIENT_ID: ${CISCO_CLIENT_ID:-}
       CISCO_CLIENT_SECRET: ${CISCO_CLIENT_SECRET:-}

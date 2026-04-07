@@ -7,6 +7,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2026-04-07] - Docker Distribution
+
+**Branch:** `claude/code-review-docker-setup-FES9r`
+
+**Category:** Distribution / Deployment
+
+**Severity/Impact:** Medium - new deployment surface, no runtime changes to the application itself.
+
+**Summary:** Added a complete Docker distribution so APEX can be deployed on a Linux Docker host without the Windows / NSSM toolchain. Three containers (PostgreSQL 16, Express backend, nginx web tier) on a private bridge network, only the web tier publishes a host port. Includes a clean-install bootstrap script, hardened `.dockerignore` so secrets and dev-only files do not ship in the image, full handoff-ready operator documentation, and an air-gapped install path via `docker save` / `docker load`.
+
+### Details
+
+#### 1. Compose stack (`docker-compose.yml`) - NEW FILE
+
+- Three services: `db` (postgres:16-alpine), `backend` (built from `docker/Dockerfile.backend`), `web` (built from `docker/Dockerfile.web`).
+- Private bridge network `apex-net`. Only `web` publishes a port (`${WEB_PORT}:80`, default 8080). `backend` and `db` are unreachable from the host network.
+- `:?` guards on `DB_PASSWORD` and `JWT_SECRET` - compose refuses to start if either is missing.
+- Healthchecks: `pg_isready` for db, `wget` against `/health` for backend, `wget` against `/healthz` for web. `depends_on: condition: service_healthy` so the backend never starts before the db is ready.
+- Named volumes `apex-db-data` and `apex-uploads` for persistent state.
+- Wires `INITIAL_ADMIN_EMAIL`, `INITIAL_ADMIN_PASSWORD`, `INITIAL_ADMIN_NAME` into the backend container for the bootstrap script.
+
+#### 2. Backend image (`docker/Dockerfile.backend`) - NEW FILE
+
+- Multi-stage build: `node:20-alpine` deps stage runs `npm ci --omit=dev`, runtime stage copies the prepared `node_modules` and source.
+- Non-root user `apex` (uid/gid created in the image), owns `/app` and `/app/uploads`.
+- `tini` as PID 1 for proper signal handling and zombie reaping.
+- Healthcheck hits `/health` directly inside the container.
+- Listens on `PORT=3001` (set by compose, honored by `node/server.js`).
+
+#### 3. Web image (`docker/Dockerfile.web`) - NEW FILE
+
+- Two-stage build. First stage uses `node:20-alpine` to run `npm ci && npm run build` in `client/`, producing the Vue 3 IIFE bundle. Vite is configured with `outDir: '../vue'`, so the artifact lands at `/src/vue/apex-rooms.iife.js`.
+- Final stage is `nginx:1.27-alpine` and copies in `index.html`, `images/`, and the freshly built Vue bundle. Default nginx site is removed.
+- Healthcheck hits `/healthz`.
+
+#### 4. nginx config (`docker/nginx.conf`) - NEW FILE
+
+- Reverse proxies `/api/*` to `http://backend:3001` (Docker DNS) with `Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto` set.
+- Adds security headers: `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-XSS-Protection: 1; mode=block`.
+- `/vue/` served with `Cache-Control: public, max-age=2592000, immutable` (cache-busted by `?v=` query in `index.html`).
+- `/` and `index.html` served with `Cache-Control: no-store, no-cache, must-revalidate` so version bumps take effect on first request.
+- `/healthz` returns plain text `ok` with `access_log off` for load-balancer probes.
+- `client_max_body_size 25m` to allow attachment uploads.
+
+#### 5. Initial admin bootstrap (`node/seed-admin.js`) - NEW FILE
+
+- Standalone script intended to be run once on first deploy: `docker compose exec backend node seed-admin.js`.
+- Reads `INITIAL_ADMIN_EMAIL`, `INITIAL_ADMIN_PASSWORD`, and optional `INITIAL_ADMIN_NAME` from environment variables.
+- Validates the password against the same rules as the rest of the codebase: min 12 chars, mixed case, digit, special character, no triple-repeated characters, no common sequences.
+- Creates the `Users` table (and migration columns) if it does not exist - schema kept in sync with the lazy-init in `node/routes/auth.js`.
+- **Idempotent and safe to re-run.** Refuses to do anything if any user already exists, which prevents accidental privilege escalation by re-running with a different password on a populated DB.
+- bcrypt cost factor 12, matching the rest of the codebase. Sets the 60-day password expiration timestamp.
+- Provides a clean-install path with no test data (the existing `seed-demo.js` is destructive and seeds 600+ rows of fictional projects).
+
+#### 6. Hardened `.dockerignore` - NEW FILE
+
+- Excludes `**/.env` and `**/.env.*` at any depth (the previous root-only `.env` pattern would have leaked `node/.env` into the backend image, which contained the dev DB password, JWT secret, and real Cisco OAuth client credentials).
+- Excludes `**/tests/`, `**/__tests__/`, `**/*.test.js`.
+- Excludes `node/check-reports.js` (dev tool with hardcoded service-account credentials, not a production runtime requirement).
+- Excludes `node/seed-fieldops.sql` (test data).
+- Excludes `node/uploads/`, `node/logs/`, `node/backups/`, `client/dist`, `**/node_modules`, IDE folders.
+- Keeps `README.md` and `docker/README.md` for documentation; excludes other markdown.
+
+#### 7. Environment template (`.env.example`) - NEW FILE
+
+- Documents every variable the compose stack and bootstrap script consume.
+- Includes generation hints (`openssl rand -base64 24` for `DB_PASSWORD`, `openssl rand -base64 48` for `JWT_SECRET`).
+- `INITIAL_ADMIN_*` variables are present so a fresh deploy has a working bootstrap path.
+
+#### 8. Operator documentation (`docker/README.md`) - NEW FILE
+
+- Quick start (clean install, no test data).
+- Optional demo data load with explicit warning that `seed-demo.js` is destructive.
+- Backup procedures (logical `pg_dump` and file-system snapshots) and a tested restore procedure.
+- Reverse proxy / TLS examples for external nginx and Cloudflare Tunnel.
+- Air-gapped install via `docker save | gzip` on a connected build machine and `docker load` on the target.
+- Update path for both connected and air-gapped hosts.
+- Day-2 operations (logs, restart, shell, stop, destroy).
+- Security checklist (8 items covering secrets, firewall, backups, base image patching, TLS).
+- Troubleshooting for the common failure modes (missing env vars, healthcheck races, 502 on `/api`, upload permissions, the benign field-ops migration log).
+
+#### 9. Lock file fix (`client/package-lock.json`)
+
+- Regenerated to add `@emnapi/core@1.9.2`, `@emnapi/runtime@1.9.2`, and bump `@emnapi/wasi-threads` to `1.2.1`. The committed lock file was out of sync with `package.json`, which made `npm ci` in the web image build fail with `EUSAGE`. No source changes.
+
+#### 10. Main README (`README.md`)
+
+- Added a "Quick Start (Docker)" section pointing at `docker/README.md` for the full operator instructions. The existing bare-metal quick-start is preserved as "Quick Start (Bare Metal)".
+
+### Verification
+
+- `docker compose build` produces both `apex-backend:latest` and `apex-web:latest` images.
+- Vue bundle compiles cleanly inside the build container: `apex-rooms.iife.js` 2,320,649 bytes / gzip 645 kB, no TypeScript errors.
+- All three containers reach `healthy` state within ~30 seconds of `docker compose up -d`.
+- Verified endpoints: `/healthz` (nginx), `/health` (backend via proxy), `/` (index.html, no-store), `/vue/apex-rooms.iife.js` (immutable cache), `POST /api/auth/login` (proxy round-trip with validation response).
+- Verified `/app/.env` is no longer present inside the backend image after the `.dockerignore` fix.
+- Verified `seed-admin.js` against a fresh DB: creates the admin, refuses to run a second time with the user-already-exists message, password validation rejects weak inputs.
+- Verified non-root `apex` user can write to `/app/uploads`.
+
+### Out of scope for this change
+
+- The pre-existing `POST /api/auth/register` endpoint is unauthenticated and accepts a `role` from the request body. Any client that can reach the API can create themselves as `superadmin` / `owner` / `admin`. This is an application-layer issue, not docker-specific, and is documented separately for follow-up.
+- The pre-existing field-ops migration race that logs `relation "fieldops" does not exist` on every backend startup. Benign, table is created lazily on first request.
+
+---
+
 ## [2026-03-31] - Cisco Control Hub Integration
 
 **Commit:** 1ee7338 on branch `main` - https://github.com/DaemonAlex/apex-platform.git
