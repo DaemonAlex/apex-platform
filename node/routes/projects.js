@@ -155,7 +155,11 @@ async function initializeProjectsTable() {
     { name: 'estimatedBudget', def: 'NUMERIC(12,2) DEFAULT 0' },
     { name: 'costCenter', def: 'VARCHAR(255)' },
     { name: 'purchaseOrder', def: 'VARCHAR(255)' },
-    { name: 'parent_project_id', def: 'VARCHAR(50)' }
+    { name: 'parent_project_id', def: 'VARCHAR(50)' },
+    { name: 'location_id', def: 'INT' },
+    { name: 'floor_id', def: 'INT' },
+    { name: 'project_manager', def: 'VARCHAR(255)' },
+    { name: 'stakeholders', def: 'JSONB' }
   ];
 
   for (const column of columns) {

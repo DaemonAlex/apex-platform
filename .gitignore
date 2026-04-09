@@ -67,3 +67,6 @@ public/vue/
 
 # Client build cache
 client/node_modules/
+
+# Claude Code local state (plans, memory, session data)
+.claude/
