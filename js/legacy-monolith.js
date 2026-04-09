@@ -1657,3 +1657,122 @@
         }
 
         // [Removed ~1,199 lines: ProductivityMonitor, Personal insights UI - replaced by Vue 3 apps]
+
+
+// =============================================================================
+// Inline event handler replacement (added 2026-04-08)
+// =============================================================================
+//
+// Wires up element event handlers from declarative data-* attributes so the
+// CSP can drop 'unsafe-inline' from script-src. Replaces what used to be
+// 30 inline onclick/onsubmit/onchange/oninput attributes in index.html.
+//
+// Supported attributes:
+//
+//   data-action="fnName"            - click handler, calls window[fnName]()
+//   data-action="fnName" data-arg=X - click handler, calls window[fnName](X)
+//   data-form-handler="fnName"      - submit handler, e.preventDefault() then
+//                                     window[fnName](event)
+//   data-change-handler="fnName"    - change handler, calls window[fnName]()
+//   data-input-handler="fnName"     - input handler, calls window[fnName](el)
+//                                     (passes the element, like the original
+//                                     oninput="fn(this)" pattern)
+//
+// For elements that need to call multiple functions (the 4 user dropdown
+// items), they have explicit ids (dropdownAccountSettings, dropdownNotifications,
+// dropdownPreferences, dropdownLogout) and are wired in wireupCompoundHandlers
+// below.
+//
+// Anchor tags (<a href="#">) get e.preventDefault() automatically so they
+// don't navigate to "#" and scroll the page.
+
+function wireupDataActions() {
+    // Generic click handlers via data-action / data-arg
+    document.querySelectorAll('[data-action]').forEach(function (el) {
+        el.addEventListener('click', function (e) {
+            if (el.tagName === 'A') e.preventDefault();
+            var fnName = el.dataset.action;
+            var arg = el.dataset.arg;
+            var fn = window[fnName];
+            if (typeof fn !== 'function') {
+                console.warn('[wireupDataActions] no function for data-action="' + fnName + '"');
+                return;
+            }
+            if (arg !== undefined && arg !== null && arg !== '') {
+                // Convert numeric-looking args (e.g. data-arg="-1" for changeMonth)
+                var n = Number(arg);
+                fn(!isNaN(n) && arg.trim() !== '' && /^-?\d+(\.\d+)?$/.test(arg) ? n : arg);
+            } else {
+                fn();
+            }
+        });
+    });
+
+    // Form submit handlers via data-form-handler
+    document.querySelectorAll('[data-form-handler]').forEach(function (form) {
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            var fnName = form.dataset.formHandler;
+            var fn = window[fnName];
+            if (typeof fn !== 'function') {
+                console.warn('[wireupDataActions] no function for data-form-handler="' + fnName + '"');
+                return;
+            }
+            fn(e);
+        });
+    });
+
+    // Change handlers via data-change-handler
+    document.querySelectorAll('[data-change-handler]').forEach(function (el) {
+        el.addEventListener('change', function () {
+            var fnName = el.dataset.changeHandler;
+            var fn = window[fnName];
+            if (typeof fn !== 'function') {
+                console.warn('[wireupDataActions] no function for data-change-handler="' + fnName + '"');
+                return;
+            }
+            fn();
+        });
+    });
+
+    // Input handlers via data-input-handler (passes the element, mirroring
+    // the original oninput="fn(this)" pattern)
+    document.querySelectorAll('[data-input-handler]').forEach(function (el) {
+        el.addEventListener('input', function () {
+            var fnName = el.dataset.inputHandler;
+            var fn = window[fnName];
+            if (typeof fn !== 'function') {
+                console.warn('[wireupDataActions] no function for data-input-handler="' + fnName + '"');
+                return;
+            }
+            fn(el);
+        });
+    });
+
+    // Compound handlers - elements that call multiple functions on click.
+    // Each is wired explicitly because data-action only supports a single fn.
+    var compounds = [
+        { id: 'dropdownAccountSettings', handler: function () { showView('profile'); toggleUserMenu(); } },
+        { id: 'dropdownNotifications',   handler: function () { toggleUserMenu(); } },
+        { id: 'dropdownPreferences',     handler: function () { showView('profile'); toggleUserMenu(); } },
+        { id: 'dropdownLogout',          handler: function () { logout(); } },
+    ];
+    compounds.forEach(function (c) {
+        var el = document.getElementById(c.id);
+        if (el) {
+            el.addEventListener('click', function (e) {
+                e.preventDefault();
+                c.handler();
+            });
+        }
+    });
+}
+
+// Run the wireup. Script tag is at end of <body> so the DOM is fully
+// parsed by the time this runs, but be defensive in case something
+// changes the load position later.
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', wireupDataActions);
+} else {
+    wireupDataActions();
+}

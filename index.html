@@ -4783,33 +4783,35 @@
 
             <div class="nav-actions">
 
-                <!-- Navigation Buttons -->
-                <button class="nav-btn" onclick="showView('dashboard')" id="navDashboard">
+                <!-- Navigation Buttons. Wired via data-action attributes by
+                     wireupDataActions() in /js/legacy-monolith.js (no inline
+                     onclick so the CSP can drop 'unsafe-inline' on script-src). -->
+                <button class="nav-btn" data-action="showView" data-arg="dashboard" id="navDashboard">
                     <i class="ph ph-chart-pie-slice"></i> Dashboard
                 </button>
-                <button class="nav-btn" onclick="showView('projects')" id="navProjects">
+                <button class="nav-btn" data-action="showView" data-arg="projects" id="navProjects">
                     <i class="ph ph-folders"></i> Projects
                 </button>
-                <button class="nav-btn" onclick="showView('fieldops')" id="navFieldops">
+                <button class="nav-btn" data-action="showView" data-arg="fieldops" id="navFieldops">
                     <i class="ph ph-wrench"></i> Field Ops
                 </button>
-                <button class="nav-btn" onclick="showView('cisco')" id="navCisco">
+                <button class="nav-btn" data-action="showView" data-arg="cisco" id="navCisco">
                     <i class="ph ph-buildings"></i> Infrastructure
                 </button>
-                <button class="nav-btn" onclick="showView('reports')" id="navReports">
+                <button class="nav-btn" data-action="showView" data-arg="reports" id="navReports">
                     <i class="ph ph-chart-line-up"></i> Reports
                 </button>
-                <button class="nav-btn" onclick="showView('admin')" id="navAdmin">
+                <button class="nav-btn" data-action="showView" data-arg="admin" id="navAdmin">
                     <i class="ph ph-gear"></i> Administration
                 </button>
 
-                <button class="theme-toggle" onclick="toggleDarkMode()" id="themeToggleBtn" title="Toggle dark mode">
+                <button class="theme-toggle" data-action="toggleDarkMode" id="themeToggleBtn" title="Toggle dark mode">
                     <i class="ph ph-moon" id="themeToggleIcon"></i>
                 </button>
 
                 <!-- User Menu -->
                 <div class="user-menu">
-                    <div class="user-avatar" onclick="toggleUserMenu()" id="userAvatar">A</div>
+                    <div class="user-avatar" data-action="toggleUserMenu" id="userAvatar">A</div>
                     <div class="user-dropdown" id="userMenu" style="display: none;">
                         <div class="dropdown-header">
                             <div class="user-info">
@@ -4818,20 +4820,20 @@
                             </div>
                         </div>
                         <div class="dropdown-divider"></div>
-                        <a href="#" onclick="showView('profile'); toggleUserMenu(); return false;" class="dropdown-item">
+                        <a href="#" id="dropdownAccountSettings" class="dropdown-item">
                             <span class="dropdown-icon"><i class="ph ph-user"></i></span>
                             Account Settings
                         </a>
-                        <a href="#" onclick="toggleUserMenu(); return false;" class="dropdown-item">
+                        <a href="#" id="dropdownNotifications" class="dropdown-item">
                             <span class="dropdown-icon"><i class="ph ph-bell"></i></span>
                             Notifications
                         </a>
-                        <a href="#" onclick="showView('profile'); toggleUserMenu(); return false;" class="dropdown-item">
+                        <a href="#" id="dropdownPreferences" class="dropdown-item">
                             <span class="dropdown-icon"><i class="ph ph-palette"></i></span>
                             Preferences
                         </a>
                         <div class="dropdown-divider"></div>
-                        <a href="#" onclick="logout(); return false;" class="dropdown-item logout">
+                        <a href="#" id="dropdownLogout" class="dropdown-item logout">
                             <span class="dropdown-icon"><i class="ph ph-sign-out"></i></span>
                             Sign Out
                         </a>
@@ -4851,7 +4853,7 @@
                 <h1 style="margin: 0 0 0.5rem 0;">APEX</h1>
                 <p>AV Project Execution Platform - Unified Communications</p>
             </div>
-            <form class="login-form" method="POST" action="javascript:void(0)" onsubmit="event.preventDefault(); handleLogin(event);">
+            <form class="login-form" method="POST" action="javascript:void(0)" data-form-handler="handleLogin">
                 <div class="form-group">
                     <label for="loginEmail">Email Address</label>
                     <input type="email" id="loginEmail" name="email" required placeholder="Enter your email" autocomplete="email">
@@ -4864,7 +4866,7 @@
             </form>
 
             <div style="text-align: center; margin-top: 1rem;">
-                <a href="#" onclick="showForgotPassword(); return false;" style="color: var(--primary-600); text-decoration: none; font-size: 0.875rem;">
+                <a href="#" data-action="showForgotPassword" style="color: var(--primary-600); text-decoration: none; font-size: 0.875rem;">
                     Forgot your password?
                 </a>
             </div>
@@ -4886,7 +4888,7 @@
                 <h1 style="margin: 0 0 0.5rem 0;">Password Reset</h1>
                 <p>Enter your email address and we'll send you a reset link</p>
             </div>
-            <form class="login-form" method="POST" action="javascript:void(0)" onsubmit="event.preventDefault(); handleForgotPassword(event);">
+            <form class="login-form" method="POST" action="javascript:void(0)" data-form-handler="handleForgotPassword">
                 <div class="form-group">
                     <label for="forgotEmail">Email Address</label>
                     <input type="email" id="forgotEmail" name="email" required placeholder="Enter your email" autocomplete="email">
@@ -4895,7 +4897,7 @@
             </form>
 
             <div style="text-align: center; margin-top: 1rem;">
-                <a href="#" onclick="showLogin(); return false;" style="color: var(--primary-600); text-decoration: none; font-size: 0.875rem;">
+                <a href="#" data-action="showLogin" style="color: var(--primary-600); text-decoration: none; font-size: 0.875rem;">
                     ← Back to Sign In
                 </a>
             </div>
@@ -4929,12 +4931,12 @@
                 </ul>
             </div>
 
-            <form class="login-form" method="POST" action="javascript:void(0)" onsubmit="event.preventDefault(); handleResetPassword(event);">
+            <form class="login-form" method="POST" action="javascript:void(0)" data-form-handler="handleResetPassword">
                 <div class="form-group">
                     <label for="resetNewPassword">New Password</label>
                     <div style="position: relative;">
-                        <input type="password" id="resetNewPassword" name="newPassword" required placeholder="Enter new password" minlength="12" oninput="validatePasswordRequirements(this)">
-                        <button type="button" onclick="generateSecurePassword()" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: #007bff; color: white; border: none; border-radius: 4px; padding: 4px 8px; font-size: 0.8rem; cursor: pointer;">Generate</button>
+                        <input type="password" id="resetNewPassword" name="newPassword" required placeholder="Enter new password" minlength="12" data-input-handler="validatePasswordRequirements">
+                        <button type="button" data-action="generateSecurePassword" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: #007bff; color: white; border: none; border-radius: 4px; padding: 4px 8px; font-size: 0.8rem; cursor: pointer;">Generate</button>
                     </div>
                     <div id="passwordValidationMessage" style="font-size: 0.85rem; margin-top: 6px; display: none;"></div>
                 </div>
@@ -5021,7 +5023,7 @@
                     <div class="table-header">
                         <h3 class="table-title">Recent Projects</h3>
                         <div class="table-actions">
-                            <button class="btn btn-sm btn-secondary" onclick="showAllProjects()">
+                            <button class="btn btn-sm btn-secondary" data-action="showAllProjects">
                                 View All
                             </button>
                         </div>
@@ -5074,16 +5076,16 @@
                 <!-- Field Ops Tabs -->
                 <div class="tabs-container">
                     <div class="tabs">
-                        <button class="tab-btn active" onclick="showFieldOpsTab('today')" id="tabToday">
+                        <button class="tab-btn active" data-action="showFieldOpsTab" data-arg="today" id="tabToday">
                             <i class="ph ph-calendar"></i> Today's Schedule
                         </button>
-                        <button class="tab-btn" onclick="showFieldOpsTab('calendar')" id="tabCalendar">
+                        <button class="tab-btn" data-action="showFieldOpsTab" data-arg="calendar" id="tabCalendar">
                             <i class="ph ph-calendar-blank"></i> Calendar View
                         </button>
-                        <button class="tab-btn" onclick="showFieldOpsTab('pending')" id="tabPending">
+                        <button class="tab-btn" data-action="showFieldOpsTab" data-arg="pending" id="tabPending">
                             <i class="ph ph-hourglass"></i> Pending Queue
                         </button>
-                        <button class="tab-btn" onclick="showFieldOpsTab('history')" id="tabHistory">
+                        <button class="tab-btn" data-action="showFieldOpsTab" data-arg="history" id="tabHistory">
                             <i class="ph ph-clipboard-text"></i> History
                         </button>
                     </div>
@@ -5112,18 +5114,18 @@
                 <!-- Calendar View Tab -->
                 <div id="calendarTab" class="fieldops-tab" style="display: none;">
                     <div class="calendar-controls">
-                        <button class="btn btn-secondary" onclick="changeMonth(-1)"><i class="ph ph-caret-left"></i> Previous</button>
+                        <button class="btn btn-secondary" data-action="changeMonth" data-arg="-1"><i class="ph ph-caret-left"></i> Previous</button>
                         <h2 id="calendarMonth"></h2>
-                        <button class="btn btn-secondary" onclick="changeMonth(1)">Next <i class="ph ph-caret-right"></i></button>
+                        <button class="btn btn-secondary" data-action="changeMonth" data-arg="1">Next <i class="ph ph-caret-right"></i></button>
                         <div class="calendar-filters">
-                            <select id="filterWorkType" onchange="filterCalendar()">
+                            <select id="filterWorkType" data-change-handler="filterCalendar">
                                 <option value="">All Work Types</option>
                                 <option value="install">Installation</option>
                                 <option value="commission">Commissioning</option>
                                 <option value="breakfix">Break/Fix</option>
                                 <option value="maintenance">Maintenance</option>
                             </select>
-                            <select id="filterProject" onchange="filterCalendar()">
+                            <select id="filterProject" data-change-handler="filterCalendar">
                                 <option value="">All Projects</option>
                                 <!-- Projects will be loaded here -->
                             </select>
@@ -5150,9 +5152,9 @@
                     <div class="history-header">
                         <h2>Completed Field Work</h2>
                         <div class="history-filters">
-                            <input type="date" id="historyStartDate" onchange="loadFieldHistory()">
+                            <input type="date" id="historyStartDate" data-change-handler="loadFieldHistory">
                             <span>to</span>
-                            <input type="date" id="historyEndDate" onchange="loadFieldHistory()">
+                            <input type="date" id="historyEndDate" data-change-handler="loadFieldHistory">
                         </div>
                     </div>
                     <div id="historyList" class="history-list">
