@@ -46,6 +46,11 @@ function mapProjectRow(row) {
     locationId: row.location_id || null,
     projectManager: row.project_manager || null,
     stakeholders: row.stakeholders || [],
+    estimatedHours: row.estimatedhours || null,
+    actualHours: row.actualhours || null,
+    timeEntries: row.timeentries ? (typeof row.timeentries === 'string' ? JSON.parse(row.timeentries) : row.timeentries) : [],
+    ragStatus: row.ragstatus || null,
+    ragReason: row.ragreason || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -159,7 +164,12 @@ async function initializeProjectsTable() {
     { name: 'location_id', def: 'INT' },
     { name: 'floor_id', def: 'INT' },
     { name: 'project_manager', def: 'VARCHAR(255)' },
-    { name: 'stakeholders', def: 'JSONB' }
+    { name: 'stakeholders', def: 'JSONB' },
+    { name: 'estimatedHours', def: 'NUMERIC(10,2)' },
+    { name: 'actualHours', def: 'NUMERIC(10,2)' },
+    { name: 'timeEntries', def: 'TEXT' },
+    { name: 'ragStatus', def: 'VARCHAR(10)' },
+    { name: 'ragReason', def: 'VARCHAR(255)' }
   ];
 
   for (const column of columns) {
@@ -381,6 +391,8 @@ router.put('/:id',
       requestDate: 'requestdate', costCenter: 'costcenter', purchaseOrder: 'purchaseorder',
       parent_project_id: 'parent_project_id', locationId: 'location_id',
       projectManager: 'project_manager', stakeholders: 'stakeholders',
+      estimatedHours: 'estimatedhours', actualHours: 'actualhours',
+      timeEntries: 'timeentries', ragStatus: 'ragstatus', ragReason: 'ragreason',
     };
 
     const setClauses = [];
@@ -391,7 +403,7 @@ router.put('/:id',
       if (jsKey in updates) {
         let val = updates[jsKey];
         // Handle special types
-        if ((dbCol === 'tasks' || dbCol === 'stakeholders') && val) val = JSON.stringify(val);
+        if ((dbCol === 'tasks' || dbCol === 'stakeholders' || dbCol === 'timeentries') && val) val = JSON.stringify(val);
         if (['startdate','enddate','duedate','requestdate'].includes(dbCol) && val) val = new Date(val);
         setClauses.push(`${dbCol} = $${idx}`);
         values.push(val);
