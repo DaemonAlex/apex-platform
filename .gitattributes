@@ -1,0 +1,23 @@
+# Shell scripts MUST use LF so they run on Linux regardless of where they
+# were checked out. Windows developers will see LF in their working tree
+# for these files even with core.autocrlf=true.
+*.sh       text eol=lf
+*.bash     text eol=lf
+
+# Dockerfiles and compose files are read by Linux-based Docker tooling.
+Dockerfile*      text eol=lf
+docker-compose*  text eol=lf
+*.yml            text eol=lf
+*.yaml           text eol=lf
+
+# Treat the built Vue IIFE bundle as text so git can diff it, but don't
+# let autocrlf touch it — it's machine-generated.
+vue/apex-rooms.iife.js  text eol=lf
+vue/apex-rooms.css      text eol=lf
+
+# PEM / DER / binary artifacts stay binary.
+*.pem      binary
+*.der      binary
+*.p12      binary
+*.pfx      binary
+*.dump     binary

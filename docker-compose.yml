@@ -51,9 +51,19 @@ services:
       DB_SSL_CA: ${DB_SSL_CA:-}
       DB_SSL_CERT: ${DB_SSL_CERT:-}
       DB_SSL_KEY: ${DB_SSL_KEY:-}
-      # --- Auth ---
+      # --- Auth (v9.0 — RS256 cookies + HS256 legacy fallback) ---
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      JWT_PRIVATE_KEY_FILE: ${JWT_PRIVATE_KEY_FILE:-/app/secrets/jwt_private.pem}
+      JWT_PUBLIC_KEY_FILE: ${JWT_PUBLIC_KEY_FILE:-/app/secrets/jwt_public.pem}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+      JWT_REFRESH_TTL_DAYS: ${JWT_REFRESH_TTL_DAYS:-14}
+      # --- Session cookies ---
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
+      # --- TOTP 2FA ---
+      TOTP_ENC_KEY: ${TOTP_ENC_KEY:?TOTP_ENC_KEY is required — openssl rand -base64 32}
+      TOTP_ISSUER: ${TOTP_ISSUER:-APEX Platform}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
       # --- Initial admin bootstrap (consumed by node seed-admin.js, not server.js) ---
       INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-}
@@ -67,6 +77,9 @@ services:
       CISCO_MOCK_MODE: ${CISCO_MOCK_MODE:-true}
     volumes:
       - apex-uploads:/app/uploads
+      # RSA keypair for RS256 access tokens. Mounted read-only — the
+      # container process cannot modify or overwrite the private key.
+      - ./secrets:/app/secrets:ro
       # Mount external CA certs here when DB_SSL_CA points inside this directory:
       # - ./certs:/etc/apex/certs:ro
     networks:

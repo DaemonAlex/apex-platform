@@ -1,102 +1,176 @@
-# APEX Platform - Docker Distribution
+# APEX Platform — Docker & Linux Distribution
 
-Production Docker setup for deploying APEX on a Linux server. Three containers,
-private bridge network, only the web tier exposes a port. Designed for
-hand-off to a corporate Docker host with no source-tree dependencies at runtime.
+Production + development Docker setup for running APEX on a Linux host. Two
+compose files live in the repo root:
 
-| Service | Image | Purpose | Exposed |
-|---------|-------|---------|---------|
-| `db` | `postgres:16-alpine` | PostgreSQL 16 database | internal only |
-| `backend` | built from `docker/Dockerfile.backend` | Express API on port 3001 | internal only |
-| `web` | built from `docker/Dockerfile.web` | nginx serving the frontend + reverse-proxying `/api` to backend | host port (default `8080`) |
+| File | Purpose | Cookie `Secure` flag | Hot reload | Ports exposed |
+|------|---------|----------------------|------------|---------------|
+| `docker-compose.yml` | Production stack | `true` (HTTPS required) | No (prebuilt image) | `web` only (`8080`) |
+| `docker-compose.dev.yml` | Linux dev box | `false` (plain-HTTP OK) | Yes (nodemon + Vite) | `web` + `backend` + `db` + Vite |
 
-The backend and database are never reachable from outside the Docker network.
-All client traffic terminates at `web`, which proxies `/api/*` to `backend`
-over the private network.
+Both run the same three services: `db` (PostgreSQL 16), `backend`
+(Express + Node 20), `web` (nginx serving the built Vue bundle).
+
+---
+
+## At a glance — v9.0 security posture
+
+Everything below is enforced by the compose stack out of the box. See the
+full [`Security model`](#security-model) section later for the authoritative
+list.
+
+- RS256 access tokens in **httpOnly + Secure + SameSite=Strict cookies**
+- Opaque, SHA-256-hashed refresh tokens with rotation + reuse detection
+- CSRF double-submit cookie + `X-CSRF-Token` header on mutating requests
+- TOTP 2FA (AES-256-GCM at rest, 10 bcrypt-hashed one-time backup codes)
+- Account lockout — 5 fails / 15 min, 10 / 1 h, 15 / 24 h
+- Project-level IDOR gate via the `project_members` table
+- bcrypt cost 12 passwords, 12-character policy, 60-day rotation
+- Rate limits: 500 req / 15 min global, 15 / 15 min on `/api/auth/*`
+- Helmet CSP + strict nginx security headers, `server_tokens off`
 
 ---
 
 ## Prerequisites
 
-- Linux host with Docker Engine 20.10+ and Docker Compose v2 (`docker compose ...`, not legacy `docker-compose`)
+- Linux host, macOS, or Windows with WSL2
+- Docker Engine 20.10+ and the Docker Compose v2 plugin (`docker compose`, not legacy `docker-compose`)
+- `openssl` on the build host (used by the bootstrap script + manual key generation)
 - ~2 GB free disk for images, plus DB volume growth
-- Outbound HTTPS during the initial image build (npm registry, Alpine package mirrors)
-  - For air-gapped hosts, see "Air-gapped install" below.
-- An upstream TLS terminator if you are exposing this on the internet (nginx, Traefik, Caddy, F5, Cloudflare Tunnel, etc.). The `web` container speaks plain HTTP.
+- Outbound HTTPS during the initial image build (npm registry, Alpine package mirrors) — for air-gapped hosts see [`Air-gapped install`](#air-gapped-install)
+- An upstream TLS terminator for any internet-facing deployment (Traefik, Caddy, Cloudflare Tunnel, F5, AWS ALB, etc.). The `web` container speaks plain HTTP on port 80.
 
 ---
 
-## Quick start (clean install, no test data)
+## Quick start — Development (`docker-compose.dev.yml`)
+
+For a developer's laptop or dev box. Generates everything on the fly, runs
+the backend under nodemon, runs Vite with HMR against a bind-mounted
+`client/` directory, and publishes every internal port so you can run
+`psql`, `curl`, or `jest` against the container stack from the host.
 
 ```bash
-# 1. Clone the repo on the build machine
+# Clone and check out the dev branch
+git clone https://github.com/DaemonAlex/apex-platform.git
+cd apex-platform
+git checkout dev
+
+# One-shot bootstrap: generates secrets/, .env, prints the initial admin password
+./docker/bootstrap-dev.sh
+
+# Bring up the stack (first run pulls + builds images; subsequent starts are fast)
+docker compose -f docker-compose.dev.yml up --build
+
+# --- in a second terminal ---
+# Push the schema
+docker compose -f docker-compose.dev.yml exec backend npm run db:push
+
+# Seed the first admin user (idempotent)
+docker compose -f docker-compose.dev.yml exec backend node seed-admin.js
+```
+
+Open the app:
+
+| URL | What |
+|-----|------|
+| `http://localhost:8080` | Full app via nginx + the committed Vue bundle |
+| `http://localhost:5173` | Vite dev server with hot module reload on `client/` |
+| `http://localhost:3001/health` | Backend liveness (exposed for curl / Jest) |
+| `postgres://localhost:5432` | Database (use `DB_USERNAME` / `DB_PASSWORD` from `.env`) |
+
+### Running backend tests against the dev stack
+
+```bash
+export APEX_TEST_URL=http://localhost:3001
+export APEX_TEST_USER=dev@apex.local
+export APEX_TEST_PASSWORD='<from bootstrap output or .env>'
+cd node && npm test
+```
+
+### Editing backend code
+
+`./node` is bind-mounted at `/app` inside the `backend` container, and the
+container runs `nodemon --watch .` — save a `.js` file on the host and
+nodemon restarts the backend. The DB connection persists; no schema
+rebuild unless you change `drizzle/schema.ts` and re-run `db:push`.
+
+### Editing frontend code
+
+`./client` is bind-mounted into the `vite` service. Vite's HMR pushes
+changes straight to `http://localhost:5173` without a rebuild. To
+exercise the production bundle instead, run `npm run build` on the host
+and reload `http://localhost:8080`.
+
+### Resetting dev state
+
+```bash
+# Stop, destroy volumes (DB + uploads), start fresh
+docker compose -f docker-compose.dev.yml down -v
+./docker/bootstrap-dev.sh   # does nothing if files exist; delete .env + secrets/ first for a full regen
+docker compose -f docker-compose.dev.yml up --build
+```
+
+---
+
+## Quick start — Production (`docker-compose.yml`)
+
+Clean install, no test data, production hardening defaults. Use this on
+any host intended for real traffic.
+
+```bash
+# 1. Clone the main branch
 git clone https://github.com/DaemonAlex/apex-platform.git
 cd apex-platform
 
-# 2. Configure environment
+# 2. Generate the RSA keypair the backend uses for RS256 access tokens
+./docker/generate-keys.sh
+
+# 3. Configure environment
 cp .env.example .env
 
-# Edit .env and set the following (the compose file will refuse to start
-# without DB_PASSWORD and JWT_SECRET):
-#
-#   DB_PASSWORD              - openssl rand -base64 24
-#   JWT_SECRET               - openssl rand -base64 48
-#   INITIAL_ADMIN_EMAIL      - the human who will own this deployment
-#   INITIAL_ADMIN_PASSWORD   - min 12 chars, mixed case, digit, special
-#   INITIAL_ADMIN_NAME       - display name (optional)
-#   WEB_PORT                 - host port to publish, default 8080
-#   FRONTEND_URL             - public origin used for CORS, e.g. https://apex.example.com
+# Edit .env. The compose file refuses to start without:
+#   DB_PASSWORD            openssl rand -base64 24
+#   JWT_SECRET             openssl rand -base64 48    (HS256 fallback)
+#   TOTP_ENC_KEY           openssl rand -base64 32    (AES-256-GCM for 2FA)
+#   INITIAL_ADMIN_EMAIL    the human who will own this deployment
+#   INITIAL_ADMIN_PASSWORD min 12 chars, mixed case, digit, special
+#   FRONTEND_URL           public origin used for CORS, e.g. https://apex.example.com
 
-# 3. Build images
+# 4. Build images
 docker compose build
 
-# 4. Start the stack
+# 5. Start the stack
 docker compose up -d
 
-# 5. Wait for db + backend healthchecks to go green
-docker compose ps
-# All three should show "(healthy)" within ~30 seconds.
+# 6. Push the schema
+docker compose exec backend npm run db:push
 
-# 6. Bootstrap the first admin user
+# 7. Bootstrap the first admin user
 docker compose exec backend node seed-admin.js
-# Should print "Initial admin created: ..." with the email you set in .env.
+# prints "Initial admin created: ..." with the email you set in .env.
 
-# 7. Verify
-curl -fsS http://localhost:8080/healthz       # nginx -> "ok"
-curl -fsS http://localhost:8080/health        # backend -> {"status":"healthy",...}
+# 8. Smoke test
+curl -fsS http://localhost:8080/healthz    # nginx -> "ok"
+curl -fsS http://localhost:8080/health     # backend -> {"status":"healthy",...}
 ```
 
 Open `http://<host>:8080` in a browser, log in with the email and password
-you set in `.env`, then **change the password from the Profile page** and
-delete the `INITIAL_ADMIN_PASSWORD` line from `.env`.
+from `.env`, then **change the password from the Profile page** and delete
+`INITIAL_ADMIN_PASSWORD` from `.env`.
 
-The database starts empty - no projects, no rooms, no test users. Everything
-is created through the UI.
+The database starts empty — no projects, no rooms, no test users.
 
----
+### Optional — load demo data
 
-## Optional: load demo data
-
-For evaluation or training environments, an additional script seeds 30+
-fictional projects, rooms, and check history:
+For evaluation or training environments:
 
 ```bash
 docker compose exec backend node seed-demo.js
 ```
 
-**Warning:** `seed-demo.js` is destructive. It deletes all existing rows in
-`projects` (where id starts with `WTB_`), `rooms`, and `roomcheckhistory`
-before inserting demo data. Do not run on a production deployment that has
-real data.
-
-To wipe demo data later, drop and recreate the volume (destroys ALL data
-including users):
-
-```bash
-docker compose down -v
-docker compose up -d
-docker compose exec backend node seed-admin.js
-```
+**Warning:** `seed-demo.js` is destructive. It deletes all rows in `projects`
+(where id starts with `WTB_`), `rooms`, and `roomcheckhistory` before
+inserting demo data. Do not run on a deployment with real data.
 
 ---
 
@@ -104,19 +178,21 @@ docker compose exec backend node seed-admin.js
 
 | Volume | Mounted at | Contents | Backup priority |
 |--------|------------|----------|-----------------|
-| `apex-db-data` | `/var/lib/postgresql/data` (db) | PostgreSQL data files - users, projects, rooms, audit log | **CRITICAL** |
-| `apex-uploads` | `/app/uploads` (backend) | Task attachment uploads via `/api/attachments` | **CRITICAL** |
+| `apex-db-data` | `/var/lib/postgresql/data` (db) | PostgreSQL data — users, projects, rooms, audit log, refresh tokens, 2FA secrets | **CRITICAL** |
+| `apex-uploads` | `/app/uploads` (backend) | Task attachment uploads | **CRITICAL** |
+| `./secrets` (bind) | `/app/secrets:ro` (backend) | RSA keypair for RS256 | **CRITICAL** (keep offline backup) |
 
-Both are managed Docker named volumes. Inspect with `docker volume inspect apex-platform_apex-db-data`.
+The dev compose defines the same volumes with `-dev` suffixes so dev and
+prod state can coexist on the same host.
 
 ### Backup
 
 ```bash
-# Logical SQL dump (preferred - portable, smaller, point-in-time)
+# Logical SQL dump (preferred — portable, point-in-time)
 docker compose exec -T db pg_dump -U apex_user -d apex_db -F c -f /tmp/apex.dump
 docker compose cp db:/tmp/apex.dump ./apex-$(date +%Y%m%d).dump
 
-# File-system snapshot of the data volume (faster but engine-version-locked)
+# File-system snapshot of the data volume (faster, engine-version-locked)
 docker run --rm \
   -v apex-platform_apex-db-data:/data:ro \
   -v "$PWD":/backup \
@@ -127,20 +203,25 @@ docker run --rm \
   -v apex-platform_apex-uploads:/data:ro \
   -v "$PWD":/backup \
   alpine tar czf /backup/apex-uploads-$(date +%Y%m%d).tgz -C /data .
+
+# RSA keys (back up offline — losing them invalidates every active session)
+tar czf apex-keys-$(date +%Y%m%d).tgz secrets/
 ```
 
-Schedule these via cron on the host. Test restore at least once before relying on the backups.
+Schedule the first three via cron. Test restore at least once before
+relying on the backups. Keep the keys archive somewhere encrypted and
+separate from the DB backups.
 
 ### Restore
 
 ```bash
-# pg_dump restore (into a fresh stack)
 docker compose down -v
 docker compose up -d db
-# wait for healthy:
 until docker compose exec -T db pg_isready -U apex_user; do sleep 1; done
 docker compose cp ./apex-20260101.dump db:/tmp/apex.dump
 docker compose exec -T db pg_restore -U apex_user -d apex_db --clean --if-exists /tmp/apex.dump
+# Restore the key archive back to ./secrets/ so refresh tokens verify
+tar xzf apex-keys-20260101.tgz
 docker compose up -d backend web
 ```
 
@@ -149,11 +230,11 @@ docker compose up -d backend web
 ## Reverse proxy / TLS
 
 The `web` container only speaks HTTP on port 80 inside the network and
-publishes that on the host as `${WEB_PORT}` (default 8080). For any
+publishes that on the host as `${WEB_PORT}` (default `8080`). For any
 internet-facing deployment, put it behind your existing TLS terminator
-and forward the standard proxy headers:
+and forward the standard proxy headers.
 
-### Example - external nginx
+### External nginx
 
 ```nginx
 server {
@@ -176,7 +257,7 @@ server {
 }
 ```
 
-### Example - Cloudflare Tunnel
+### Cloudflare Tunnel
 
 ```yaml
 ingress:
@@ -186,34 +267,32 @@ ingress:
 ```
 
 After putting it behind TLS, set `FRONTEND_URL=https://apex.example.com`
-in `.env` and `docker compose up -d` to apply. CORS will reject any
-origin that doesn't match.
+and `COOKIE_SECURE=true` in `.env`, then `docker compose up -d` to apply.
+CORS will reject any origin that doesn't match.
 
 ---
 
 ## Air-gapped install
 
-If the target host has no internet access, build the images on a connected
-machine and transfer them as tar files.
+Build the images on a connected machine and transfer them as a tar file.
 
 **On the build machine:**
 
 ```bash
 git clone https://github.com/DaemonAlex/apex-platform.git
 cd apex-platform
+./docker/generate-keys.sh
 cp .env.example .env
-# Edit .env (set DB_PASSWORD, JWT_SECRET, INITIAL_ADMIN_*)
-docker compose build
+# Edit .env — set DB_PASSWORD, JWT_SECRET, TOTP_ENC_KEY, INITIAL_ADMIN_*
 
-# Save all three images to a single archive
+docker compose build
 docker save \
   apex-backend:latest \
   apex-web:latest \
   postgres:16-alpine \
   | gzip > apex-images-$(date +%Y%m%d).tgz
 
-# Transfer apex-images-*.tgz, docker-compose.yml, and .env to the target host
-scp apex-images-*.tgz docker-compose.yml .env user@target:/opt/apex/
+scp apex-images-*.tgz docker-compose.yml .env .env.example secrets/ user@target:/opt/apex/
 ```
 
 **On the target host:**
@@ -222,6 +301,7 @@ scp apex-images-*.tgz docker-compose.yml .env user@target:/opt/apex/
 cd /opt/apex
 gunzip -c apex-images-*.tgz | docker load
 docker compose up -d
+docker compose exec backend npm run db:push
 docker compose exec backend node seed-admin.js
 ```
 
@@ -234,15 +314,16 @@ cd /path/to/apex-platform
 git pull
 docker compose build
 docker compose up -d
+docker compose exec backend npm run db:push   # applies any new schema
 ```
 
 The Vue bundle is rebuilt from `client/` source by `Dockerfile.web`, so any
-changes to `client/src/` are picked up automatically. The backend image
-includes only what the runtime needs - tests, dev scripts, and the demo
-seed are excluded by `.dockerignore`.
+changes in `client/src/` ship automatically. The backend image includes
+only runtime files — tests, dev scripts, and the demo seed are excluded
+by `.dockerignore`.
 
-For an air-gapped target, repeat the air-gapped install steps with the new
-image tar.
+For an air-gapped target, repeat the air-gapped install steps with the
+new image archive.
 
 ---
 
@@ -257,14 +338,14 @@ docker compose logs -f db
 # Restart one service
 docker compose restart backend
 
-# Open a shell
+# Shell into a container
 docker compose exec backend sh
 docker compose exec db psql -U apex_user -d apex_db
 
 # Stop everything (data preserved)
 docker compose down
 
-# Stop AND delete volumes - DESTROYS ALL DATA
+# Stop AND delete volumes — DESTROYS ALL DATA
 docker compose down -v
 ```
 
@@ -272,8 +353,8 @@ docker compose down -v
 
 | URL | What |
 |-----|------|
-| `/healthz` | nginx liveness - returns `ok` plain text, no backend dependency |
-| `/health` | backend liveness via the proxy - returns `{"status":"healthy",...}` |
+| `/healthz` | nginx liveness — plain-text `ok`, no backend dependency |
+| `/health` | backend liveness via the proxy — `{"status":"healthy",...}` |
 
 Both are safe for load-balancer probes.
 
@@ -281,47 +362,75 @@ Both are safe for load-balancer probes.
 
 ## Configuration reference
 
-All settings are environment variables. The compose file passes them through
-to the backend container. Defaults in parentheses.
+Every setting is an environment variable. The compose file passes them
+through to the backend container. Defaults in parentheses.
 
 ### Required
 
 | Variable | Description |
 |---|---|
 | `DB_PASSWORD` | PostgreSQL password. Compose refuses to start without it. Generate: `openssl rand -base64 24` |
-| `JWT_SECRET` | Token signing key. Compose refuses to start without it. Generate: `openssl rand -base64 48` |
-| `INITIAL_ADMIN_EMAIL` | First admin user, consumed by `seed-admin.js` |
+| `JWT_SECRET` | HS256 fallback signing key (legacy flows + Bearer headers). Generate: `openssl rand -base64 48` |
+| `TOTP_ENC_KEY` | AES-256-GCM key for 2FA secrets at rest. Generate: `openssl rand -base64 32` |
+| `INITIAL_ADMIN_EMAIL` | First admin user (consumed by `seed-admin.js`) |
 | `INITIAL_ADMIN_PASSWORD` | First admin password (12+ chars, mixed case, digit, special, no triples, no common sequences) |
+
+### RS256 access tokens (v9.0)
+
+| Variable | Default | Description |
+|---|---|---|
+| `JWT_PRIVATE_KEY_FILE` | `/app/secrets/jwt_private.pem` | Private key used to sign access tokens. Mounted read-only |
+| `JWT_PUBLIC_KEY_FILE` | `/app/secrets/jwt_public.pem` | Public key used to verify access tokens |
+| `JWT_ACCESS_TTL` | `15m` | Access-token lifetime. Keep short — refresh covers it |
+| `JWT_REFRESH_TTL_DAYS` | `14` | Refresh-token lifetime in days (sliding — any use rotates and extends) |
+| `JWT_EXPIRES_IN` | `7d` | Legacy HS256 lifetime (only used when RS256 keys aren't loaded) |
+
+### Session cookies
+
+| Variable | Default | Description |
+|---|---|---|
+| `COOKIE_SECURE` | `true` | `Secure` flag. MUST be true in production. Set to `false` only for pure-HTTP local dev (the dev compose file does this) |
+| `COOKIE_DOMAIN` | unset | Leaves `Domain` attribute off (host-only). Set to eTLD+1 only if you need sibling-subdomain visibility |
+
+### TOTP 2FA
+
+| Variable | Default | Description |
+|---|---|---|
+| `TOTP_ENC_KEY` | — | REQUIRED. AES-256-GCM key. Distinct from JWT keys so a DB dump cannot yield session signing and a JWT-key leak cannot decrypt 2FA secrets |
+| `TOTP_ISSUER` | `APEX Platform` | Issuer name shown in authenticator apps |
 
 ### Database
 
 | Variable | Default | Description |
 |---|---|---|
-| `DB_HOST` | `db` | Hostname or service name. Set to FQDN for external/managed PostgreSQL |
+| `DB_HOST` | `db` | Service name or external FQDN |
 | `DB_PORT` | `5432` | |
 | `DB_DATABASE` | `apex_db` | |
-| `DB_USERNAME` | `apex_user` | |
+| `DB_USERNAME` | `apex_user` | Runtime user — should be CRUD-only (no DDL, no superuser) |
 | `DB_POOL_MAX` | `20` | Max pool size |
 | `DB_POOL_IDLE_MS` | `30000` | Idle connection timeout |
 | `DB_CONNECT_TIMEOUT_MS` | `10000` | Connection timeout |
-| `DB_SSL` | `false` | Set to `true` for managed PostgreSQL (RDS, Azure DB, GCP Cloud SQL) or any cross-network DB |
-| `DB_SSL_REJECT_UNAUTHORIZED` | `true` | Verify the server cert. Set to `false` ONLY for self-signed certs in trusted private networks |
-| `DB_SSL_CA` | unset | Path INSIDE THE CONTAINER to a CA cert PEM file. Mount it with a volume |
-| `DB_SSL_CERT`, `DB_SSL_KEY` | unset | Optional client cert/key for mutual TLS |
+| `DB_SSL` | `false` | `true` for managed PostgreSQL (RDS, Azure DB, GCP Cloud SQL) or any cross-network DB |
+| `DB_SSL_REJECT_UNAUTHORIZED` | `true` | Verify server cert. Set to `false` ONLY for self-signed certs in trusted private networks |
+| `DB_SSL_CA` | unset | Path INSIDE THE CONTAINER to a CA cert PEM. Mount with a volume |
+| `DB_SSL_CERT`, `DB_SSL_KEY` | unset | Optional client cert / key for mutual TLS |
+| `DDL_USERNAME`, `DDL_PASSWORD` | fall back to `DB_*` | Override credentials for `drizzle-kit push`. Set only when the runtime user is CRUD-only and a separate superuser login is needed for schema changes |
 
 ### Auth and TLS
 
 | Variable | Default | Description |
 |---|---|---|
-| `JWT_EXPIRES_IN` | `7d` | Token lifetime. Examples: `24h`, `7d`, `30d` |
-| `TLS_MIN_VERSION` | `TLSv1.2` | Minimum TLS version for ALL outbound HTTPS (DB, Cisco, future integrations). Do not lower without a compliance reason |
-| `FRONTEND_URL` | `http://localhost:8080` | Public origin used for CORS. Must match how users reach the app |
+| `TLS_MIN_VERSION` | `TLSv1.2` | Minimum TLS version for ALL outbound HTTPS (DB, Cisco, future integrations) |
+| `FRONTEND_URL` | `http://localhost:8080` | Public origin(s) for CORS, comma-separated |
 
 ### Web tier
 
 | Variable | Default | Description |
 |---|---|---|
 | `WEB_PORT` | `8080` | Host port for the nginx container |
+| `BACKEND_HOST_PORT` | `3001` | **Dev compose only** — host port for the backend |
+| `DB_HOST_PORT` | `5432` | **Dev compose only** — host port for PostgreSQL |
+| `VITE_HOST_PORT` | `5173` | **Dev compose only** — host port for Vite |
 
 ### Logging
 
@@ -329,49 +438,67 @@ to the backend container. Defaults in parentheses.
 |---|---|---|
 | `LOG_LEVEL` | `info` | `error` / `warn` / `info` / `debug` |
 
-### Optional: Cisco Control Hub
+### Optional — Cisco Control Hub
 
 | Variable | Default | Description |
 |---|---|---|
-| `CISCO_MOCK_MODE` | `true` | When `true`, returns static fixture data instead of calling the live API. Set to `false` and provide credentials to talk to a real org |
+| `CISCO_MOCK_MODE` | `true` | When `true`, returns static fixtures instead of calling the live API |
 | `CISCO_CLIENT_ID` | unset | OAuth client ID |
 | `CISCO_CLIENT_SECRET` | unset | OAuth client secret |
 | `CISCO_ORG_ID` | unset | Webex org id |
-| `CISCO_PERSONAL_TOKEN` | unset | Personal access token (overrides client credentials flow when set) |
+| `CISCO_PERSONAL_TOKEN` | unset | Personal access token (overrides client-credentials flow) |
 
 ---
 
-## Connecting to an external/managed PostgreSQL
+## Connecting to an external / managed PostgreSQL
 
-To run the backend against AWS RDS, Azure Database for PostgreSQL, GCP Cloud
-SQL, or your own external Postgres cluster instead of the in-stack `db`
-container:
+To run against AWS RDS, Azure Database for PostgreSQL, GCP Cloud SQL, or
+your own external Postgres cluster:
 
-1. **Comment out or remove the `db` service** in `docker-compose.yml` and the
+1. **Comment out the `db` service** in `docker-compose.yml` and the
    `depends_on: db` block in the `backend` service.
 2. **Point the backend at the external host** in `.env`:
+
    ```bash
    DB_HOST=apex-prod.cluster-xxxxx.us-east-1.rds.amazonaws.com
    DB_PORT=5432
    DB_DATABASE=apex_db
-   DB_USERNAME=apex_user
+   DB_USERNAME=apex_app            # CRUD-only runtime user
    DB_PASSWORD=<from secrets manager>
    DB_SSL=true
    DB_SSL_REJECT_UNAUTHORIZED=true
    DB_SSL_CA=/etc/apex/db-ca.pem
+   # For schema pushes
+   DDL_USERNAME=apex_admin
+   DDL_PASSWORD=<admin password>
    ```
-3. **Mount the CA cert** into the backend container. Add to the `backend`
-   service in `docker-compose.yml`:
+
+3. **Mount the CA cert** into the backend container:
+
    ```yaml
    volumes:
      - apex-uploads:/app/uploads
+     - ./secrets:/app/secrets:ro
      - ./certs/rds-ca.pem:/etc/apex/db-ca.pem:ro
    ```
-4. **Pre-create the database and user** on the managed instance with the
-   same name and credentials. The backend will auto-create the tables on
-   first request.
-5. `docker compose up -d` and `docker compose exec backend node seed-admin.js`
-   to bootstrap the first admin.
+
+4. **Pre-create the database and roles** on the managed instance:
+
+   ```sql
+   CREATE DATABASE apex_db;
+   CREATE USER apex_app WITH PASSWORD '<runtime>';
+   REVOKE ALL ON DATABASE apex_db FROM apex_app;
+   GRANT CONNECT ON DATABASE apex_db TO apex_app;
+   \c apex_db
+   REVOKE CREATE ON SCHEMA public FROM apex_app;
+   GRANT USAGE ON SCHEMA public TO apex_app;
+   GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO apex_app;
+   GRANT USAGE, UPDATE ON ALL SEQUENCES IN SCHEMA public TO apex_app;
+   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO apex_app;
+   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, UPDATE ON SEQUENCES TO apex_app;
+   ```
+
+5. `docker compose up -d` then `docker compose exec backend npm run db:push && docker compose exec backend node seed-admin.js`.
 
 ---
 
@@ -381,129 +508,132 @@ container:
 
 | Role | Can do |
 |---|---|
-| `superadmin`, `admin`, `owner` | Everything: create/update/delete users, roles, settings, audit log access, all project/room/field-ops actions |
-| `project_manager` | Manage projects, tasks, rooms, vendors, contacts. Cannot modify users or system settings |
+| `superadmin`, `admin`, `owner` | Everything: user / role / setting admin, audit log access, bypass the project membership gate |
+| `project_manager` | Projects, tasks, rooms, vendors, contacts; cannot modify users or system settings |
 | `field_ops` | Field operations sections, project task updates, room checks |
-| `auditor` | Read-only access to projects, rooms, audit log |
+| `auditor` | Read-only across projects, rooms, audit log |
 | `viewer` | Read-only baseline |
 
-### What's locked down (2026-04 hardening pass)
+### v9.0 hardening (authoritative)
 
-- **Public registration is disabled.** `POST /api/auth/register` returns 404.
-  Create users via `seed-admin.js` (first user) or via the admin UI / `POST /api/users` (subsequent users, admin-only).
-- **`POST /api/users`, `PUT /api/users/:id`, `DELETE /api/users/:id`,
-  `POST /api/users/:id/reset-password`** are gated to admin/superadmin/owner.
-  Previously any logged-in user (including a `viewer`) could create
-  superadmins, change anyone's role, delete the only admin, or trigger an
-  admin password reset for any account and read the temp password from the
-  response.
-- **`PUT /api/users/:id/password`, `PUT /api/users/:id/preferences`,
-  `PUT /api/users/:id/avatar`, `DELETE /api/users/:id/avatar`** are gated by
-  the `requireSelfOrAdmin` middleware: a user can act on their own record,
-  admins can act on any.
-- **Admin password reset** uses `crypto.randomBytes(12)` for the temp
-  password (was `Math.random` previously) and forces the target user to
-  change it on next login.
-- **TLS 1.2 minimum** is enforced globally for all outbound HTTPS via
-  `tls.DEFAULT_MIN_VERSION`. Configurable via `TLS_MIN_VERSION` env var.
-- **PostgreSQL TLS** is supported via `DB_SSL` family of env vars.
-- **nginx** sets a strict CSP, `Permissions-Policy`, `X-Frame-Options: DENY`,
-  `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`,
-  `server_tokens off`. HSTS is left to the upstream TLS terminator (commented
-  example in `docker/nginx.conf`).
-- **Helmet** sets equivalent headers on API responses, including a CSP.
-- **Rate limiting**: 500 req / 15 min globally, 15 attempts / 15 min on
-  `/api/auth/*` (login, password reset).
-- **Password policy**: 12 char minimum, mixed case, digit, special character,
-  no three repeated characters, no common sequences. Passwords expire after
-  60 days. Admin reset forces a change on next login.
-- **JWT** signed with `JWT_SECRET` (min 48 random bytes recommended), default
-  7-day lifetime, rejected on expiration with a clear error.
-- **Audit log** records every user mutation, login, password change, admin
-  reset, and disabled register attempt.
+**Authentication**
 
-### What's NOT enforced by the docker stack itself
+- RS256 access tokens signed with a 2048-bit RSA keypair from `./secrets/`
+- 15-minute access TTL + 14-day sliding refresh with rotation on every use
+- Refresh-token reuse detection — presenting a revoked token revokes every session for that user
+- httpOnly + Secure + SameSite=Strict cookies — tokens never touch `localStorage`
+- `/api/auth/logout` revokes the refresh row and clears cookies
+- TOTP 2FA (`/api/auth/2fa/enroll`, `/2fa/verify-enroll`, `/2fa/disable`, `/verify-totp`) — speakeasy, AES-256-GCM at rest, 10 bcrypt-hashed backup codes
+- Account lockout — 5 → 15 min, 10 → 1 h, 15 → 24 h, returns `423 Locked` + `Retry-After`
+- Public registration returns 404; users are created by admins
+- bcrypt cost 12, 12-char password policy, 60-day rotation
 
-- **TLS in transit to the browser.** The `web` container speaks plain HTTP.
-  Put it behind an upstream TLS terminator (nginx, Traefik, Cloudflare
-  Tunnel, F5, etc.) and uncomment the HSTS header in `docker/nginx.conf` if
-  you front this container directly with TLS.
-- **Network egress filtering.** If your security policy requires the backend
-  to only talk to specific CIDRs (DB host, Cisco API, internal services),
-  enforce that at the host firewall or in your container network.
-- **Secrets storage.** `.env` is a plain file on the host. For production
-  prefer file-based secrets via the `${VAR}_FILE` convention - see the
-  "Docker secrets / file-based secrets" section below for the supported
-  variables and a ready-to-use compose overlay.
+**Authorization**
 
-### Docker secrets / file-based secrets
+- IDOR gate on `/api/projects` via the `project_members` table — admins bypass, non-members receive `404` (not `403`) to prevent project-id enumeration
+- `requireSelfOrAdmin` on self-service routes (`PUT /api/users/:id/password`, `/preferences`, `/avatar`)
+- `admin` gate on every mutating `/api/users/*` endpoint
 
-For production deployments that should not store secrets in `.env`, the
-backend supports the standard `${VAR}_FILE` convention. Set
-`DB_PASSWORD_FILE`, `JWT_SECRET_FILE`, `INITIAL_ADMIN_PASSWORD_FILE`,
-`CISCO_CLIENT_SECRET_FILE`, or `CISCO_PERSONAL_TOKEN_FILE` to a path
-containing the secret value, leave the plain env var empty, and the
-backend resolves the file content into the env var on startup
-(`node/utils/secrets.js`). This is the same pattern used by official
-postgres / mysql / redis docker images.
+**API & transport**
+
+- CSRF double-submit — the non-HttpOnly `apex_csrf` cookie is echoed as `X-CSRF-Token` on every mutating request
+- Parameterized SQL everywhere (no string-concat)
+- `express-validator` on every mutating endpoint; explicit destructuring prevents mass assignment
+- Global rate limit 500 / 15 min, auth rate limit 15 / 15 min
+- All 500 responses go through `sendServerError()` returning `{error, correlationId}` — full stack stays server-side
+- No query-string JWTs (browser downloads use a `fetch` + blob helper)
+
+**nginx headers (web container)**
+
+- Helmet-equivalent CSP, Permissions-Policy, Referrer-Policy, X-Frame-Options DENY, X-Content-Type-Options nosniff
+- `server_tokens off`
+- HSTS is set at the upstream TLS terminator (commented example in `docker/nginx.conf`)
+
+**TLS**
+
+- TLS 1.2+ enforced globally for outbound HTTPS via `tls.DEFAULT_MIN_VERSION`
+- DB TLS supported via `DB_SSL` family of env vars
+
+### What's NOT enforced by the stack
+
+- **Browser-facing TLS.** The `web` container speaks plain HTTP. Use an upstream terminator.
+- **Network egress filtering.** Enforce at the host firewall or container network.
+- **Secrets storage.** `.env` is a plain file. Prefer file-based secrets — see below.
+
+---
+
+## Docker secrets / file-based secrets
+
+The backend supports the standard `${VAR}_FILE` convention. Set any of
+`DB_PASSWORD_FILE`, `JWT_SECRET_FILE`, `TOTP_ENC_KEY_FILE`,
+`INITIAL_ADMIN_PASSWORD_FILE`, `CISCO_CLIENT_SECRET_FILE`, or
+`CISCO_PERSONAL_TOKEN_FILE` to a path containing the secret value, leave
+the plain env var empty, and the backend resolves the file content into
+the env var at startup (`node/utils/secrets.js`). Same pattern as the
+official postgres / mysql / redis images.
 
 A ready-to-use overlay is provided at `docker-compose.secrets.yml`:
 
 ```bash
-# Create secret files (mode 0600, owned by root)
 mkdir -p ./secrets && chmod 700 ./secrets
 openssl rand -base64 24 > ./secrets/db_password.txt
 openssl rand -base64 48 > ./secrets/jwt_secret.txt
+openssl rand -base64 32 > ./secrets/totp_enc_key.txt
 printf 'YourBootstrapPassword!2026' > ./secrets/initial_admin_password.txt
 chmod 600 ./secrets/*.txt
 
-# Remove or empty DB_PASSWORD, JWT_SECRET, INITIAL_ADMIN_PASSWORD in .env
+# Remove or empty DB_PASSWORD, JWT_SECRET, TOTP_ENC_KEY, INITIAL_ADMIN_PASSWORD in .env
 
-# Bring up with both files - the secrets overlay adds the file mounts and
-# the *_FILE env vars
 docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d
 ```
 
-For Vault / AWS Secrets Manager / Azure Key Vault / k8s secrets, mount the
-secret value as a file via your orchestration layer and point the same
-`*_FILE` env var at the mount path. The backend handles the rest.
+For Vault / AWS Secrets Manager / Azure Key Vault / k8s secrets, mount
+the secret value as a file via your orchestration layer and point the
+matching `*_FILE` env var at the mount path. The backend handles the rest.
 
 ---
 
 ## Security checklist
 
-Before exposing this to anyone:
+Before exposing to the internet:
 
-- [ ] `.env` is on the host filesystem only, **never committed to git** (`.gitignore` already excludes it)
-- [ ] `JWT_SECRET` is at least 48 random bytes (`openssl rand -base64 48`), unique per environment
-- [ ] `DB_PASSWORD` is unique and rotated on a schedule
-- [ ] `INITIAL_ADMIN_PASSWORD` was changed from the Profile page after first login, then removed from `.env`
-- [ ] `FRONTEND_URL` is set to your real public origin so CORS rejects everything else
-- [ ] `WEB_PORT` (default 8080) is firewalled off from the public internet - only the upstream TLS proxy should reach it
-- [ ] If the database is on a different host, `DB_SSL=true` and `DB_SSL_CA` is set to a pinned CA file
-- [ ] `TLS_MIN_VERSION=TLSv1.2` (the default) - do not lower without a documented compliance reason
-- [ ] DB and uploads volumes are in your backup rotation, with a tested restore
-- [ ] `docker compose pull` runs periodically to refresh `postgres:16-alpine` and the base node/nginx images for security updates
-- [ ] Host OS is patched and Docker daemon is on a recent version
-- [ ] If the app is internet-facing, the upstream proxy enforces TLS 1.2+, HSTS, and rate-limits authentication endpoints
-- [ ] Confirmed `POST /api/auth/register` returns 404 (smoke test: `curl -i -X POST http://localhost:8080/api/auth/register`)
-- [ ] Confirmed a non-admin user cannot create/delete users or trigger password resets for other users
+- [ ] `.env` exists on the host only, **never committed** (`.gitignore` excludes it)
+- [ ] `secrets/jwt_private.pem` chmod 400, backed up offline, excluded from git
+- [ ] `JWT_SECRET` at least 48 random bytes (`openssl rand -base64 48`), unique per environment
+- [ ] `TOTP_ENC_KEY` at least 32 random bytes (`openssl rand -base64 32`), unique per environment
+- [ ] `DB_PASSWORD` unique and on a rotation schedule
+- [ ] `INITIAL_ADMIN_PASSWORD` changed from the Profile page after first login, then removed from `.env`
+- [ ] `FRONTEND_URL` set to your real public origin so CORS rejects everything else
+- [ ] `COOKIE_SECURE=true` (the default) — you're behind HTTPS
+- [ ] `WEB_PORT` (default 8080) firewalled off from the public internet — only the upstream TLS proxy should reach it
+- [ ] If the database is on a different host, `DB_SSL=true` and `DB_SSL_CA` points at a pinned CA file
+- [ ] Runtime DB user is CRUD-only (not the owner / superuser) — use `apex_app`-style grants and put schema-push creds in `DDL_*`
+- [ ] `TLS_MIN_VERSION=TLSv1.2` (the default)
+- [ ] DB, uploads, and `secrets/` in a tested backup rotation
+- [ ] `docker compose pull` runs periodically to refresh base images
+- [ ] Host OS is patched and the Docker daemon is current
+- [ ] Upstream proxy enforces TLS 1.2+, HSTS, and rate-limits `/api/auth/*`
+- [ ] Smoke test: `curl -i http://localhost:8080/api/auth/register` returns 404
+- [ ] Smoke test: a non-admin cannot read a project they aren't a member of (returns 404)
 
-### What's in the image
+---
+
+## What's in the image
 
 The backend image contains application code, `node_modules`, and the
-`seed-admin.js` and `seed-demo.js` bootstrap scripts. Excluded by
+`seed-admin.js` / `seed-demo.js` bootstrap scripts. Excluded via
 `.dockerignore`:
 
-- `**/.env` and `**/.env.*` (any environment files at any depth)
-- `**/tests/`, `**/*.test.js` (test fixtures and runner)
-- `node/check-reports.js` (dev tool with hardcoded service-account creds, not for production)
+- `**/.env` and `**/.env.*`
+- `**/tests/`, `**/*.test.js`
+- `node/check-reports.js` (dev tool — uses a service account)
 - `node/seed-fieldops.sql` (test data)
 - `node/uploads/`, `node/logs/`, `node/backups/` (local state)
 - `client/dist`, `**/node_modules`
+- `secrets/` (mounted at runtime, never baked in)
 
-If you add new files that should NOT ship in the image, update `.dockerignore`
-and verify with `docker run --rm apex-backend:latest ls -la /app`.
+If you add new files that should NOT ship in the image, update
+`.dockerignore` and verify with `docker run --rm apex-backend:latest ls -la /app`.
 
 ---
 
@@ -511,41 +641,71 @@ and verify with `docker run --rm apex-backend:latest ls -la /app`.
 
 ### Backend exits immediately with "Missing required environment variables"
 
-You forgot to set `DB_PASSWORD` or `JWT_SECRET` in `.env`. Compose will refuse
-to start the backend or db with the `:?` guard.
+You forgot to set `DB_PASSWORD`, `JWT_SECRET`, or `TOTP_ENC_KEY` in `.env`.
+Compose refuses to start the backend or db with the `:?` guard.
+
+### Backend logs "JWT public key not loaded"
+
+The RS256 keys aren't readable inside the container. Check:
+
+```bash
+docker compose exec backend ls -la /app/secrets
+docker compose exec backend cat /app/secrets/jwt_public.pem | head -2
+```
+
+You should see `-----BEGIN PUBLIC KEY-----`. If the file is missing, run
+`./docker/generate-keys.sh` on the host and restart the backend. If it
+exists but isn't readable, check the host file permissions — the mount
+is read-only, so the file must be owned in a way the container user
+can read.
+
+### Login returns a token but cookies aren't set in the browser
+
+Check that `COOKIE_SECURE` matches how you're reaching the site:
+
+- `COOKIE_SECURE=true` requires the browser to see an `https://` origin.
+  If your upstream proxy forwards to http://localhost:8080 without TLS,
+  the browser drops the Set-Cookie silently.
+- On pure-HTTP dev, set `COOKIE_SECURE=false` (the dev compose does this).
+
+Also check that `FRONTEND_URL` in `.env` matches the origin the browser
+shows. CORS + cookie origin mismatches produce the same symptom.
 
 ### `seed-admin.js` says "INITIAL_ADMIN_EMAIL is not set"
 
-You set the values in `.env` but haven't restarted compose since editing it.
-`docker compose up -d` to re-read the file, then re-run the seed.
+You edited `.env` but didn't restart compose since. `docker compose up -d`
+to re-read, then re-run the seed.
 
 ### `seed-admin.js` says "Users table already has N user(s)"
 
-Expected if you've already created users (UI registration, prior bootstrap, or
-loaded a backup). The script is idempotent and refuses to overwrite. To reset,
-`docker compose down -v` and start fresh - **this destroys all data.**
+Expected if you've created users before. The script is idempotent and
+refuses to overwrite. For a clean reset:
+
+```bash
+docker compose down -v     # DESTROYS ALL DATA
+./docker/generate-keys.sh  # regenerate keys if needed
+docker compose up -d
+docker compose exec backend npm run db:push
+docker compose exec backend node seed-admin.js
+```
 
 ### `web` returns 502 on `/api/*`
 
-Backend is not healthy. `docker compose logs backend` for the cause. Most
-common: the DB wasn't ready when the backend started. The healthcheck
-dependency in compose should prevent this on a normal restart, but a slow
-disk on first boot can still trip it. `docker compose restart backend`.
+Backend is unhealthy. `docker compose logs backend` for the cause. Most
+common: DB wasn't ready when the backend started. The healthcheck
+dependency should prevent this on a normal start, but a slow disk on
+first boot can still trip it. `docker compose restart backend`.
 
-### Frontend loads but API calls 404
+### `/api/auth/refresh` returns 401 after the backend restarts
 
-Check that nginx is proxying `/api/`:
-
-```bash
-docker compose exec web cat /etc/nginx/conf.d/apex.conf
-```
-
-The `location /api/` block should `proxy_pass` to `http://apex_backend`.
+Expected if you regenerate the RSA private key — the new backend can't
+verify tokens signed by the old key. Users need to log in again. If you
+did NOT regenerate the key, check that `./secrets` is mounted correctly.
 
 ### File uploads fail with permission denied
 
-The `apex-uploads` volume must be writable by uid/gid `apex` (created
-non-root inside the backend image). Verify:
+The `apex-uploads` volume must be writable by uid/gid `apex` (the
+non-root user created inside the backend image). Verify:
 
 ```bash
 docker compose exec backend ls -la /app/uploads
@@ -553,17 +713,23 @@ docker compose exec backend touch /app/uploads/.write-test && \
   docker compose exec backend rm /app/uploads/.write-test && echo OK
 ```
 
-If you migrated from a volume created with different ownership, fix it:
+If you migrated a volume created with different ownership:
 
 ```bash
 docker compose exec --user root backend chown -R apex:apex /app/uploads
 ```
 
-### "Field ops migration error" in backend logs on startup
+### Account locked out (`423 Locked`) during testing
 
-Pre-existing benign race - the field ops migration runs before any route has
-created the table. The table is created lazily on the first `/api/fieldops/*`
-request and the error stops appearing. Not introduced by docker, not blocking.
+Expected — the lockout counter kicks in at 5 failed attempts. To clear:
+
+```bash
+docker compose exec db psql -U apex_user -d apex_db \
+  -c "DELETE FROM auth_failures WHERE username = 'the-locked-email@example.com';"
+```
+
+In dev only, restarting the backend also resets the global rate-limit
+counter (useful when repeated Jest runs trip the `/api/auth` limiter).
 
 ### Image build fails with `npm error EUSAGE` in client stage
 
@@ -574,3 +740,10 @@ Regenerate the lock file on a machine with internet access:
 cd client && npm install
 git add package-lock.json && git commit -m "fix: sync client lockfile"
 ```
+
+### dev backend logs `EACCES` on the bind-mounted `./node` directory
+
+The dev container runs as root so this is rare, but if you've hardened
+the image: the host user that owns `./node` doesn't match the container
+user. Either run the container as root (the default dev image does),
+or `sudo chown -R $(id -u):$(id -g) node` on the host.

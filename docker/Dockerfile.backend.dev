@@ -1,0 +1,29 @@
+# APEX Backend — development image
+#
+# Differences from Dockerfile.backend (production):
+#   - Keeps dev dependencies (nodemon, drizzle-kit, jest).
+#   - Uses nodemon so file changes trigger restarts (paired with a bind
+#     mount of ./node in docker-compose.dev.yml).
+#   - Runs as root so bind-mounted files owned by the host developer
+#     don't trip EACCES. Production runs as the non-root `apex` user.
+#   - No HEALTHCHECK — `docker compose up` logs are what you'll watch.
+
+FROM node:20-alpine
+WORKDIR /app
+
+# tini for signal handling + clean restarts. Alpine deps for pg_isready.
+RUN apk add --no-cache tini wget postgresql16-client
+
+COPY node/package.json node/package-lock.json* ./
+RUN npm ci && npm cache clean --force
+
+COPY node/ ./
+
+RUN mkdir -p /app/uploads/tasks
+
+ENV NODE_ENV=development
+ENV PORT=3001
+EXPOSE 3001
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["npx", "nodemon", "--watch", ".", "--ignore", "node_modules/", "--ignore", "uploads/", "--ext", "js,json", "server.js"]
