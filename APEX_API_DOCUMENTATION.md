@@ -57,8 +57,8 @@ Authenticate user and receive access token.
 ```json
 {
   "success": true,
-  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token": "<jwt-access-token>",
+  "refreshToken": "<jwt-access-token>",
   "user": {
     "id": "user_123",
     "email": "user@example.com",
@@ -75,7 +75,7 @@ Refresh expired access token using refresh token.
 **Request:**
 ```json
 {
-  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  "refreshToken": "<jwt-access-token>"
 }
 ```
 
@@ -83,7 +83,7 @@ Refresh expired access token using refresh token.
 ```json
 {
   "success": true,
-  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token": "<jwt-access-token>",
   "expiresIn": "15m"
 }
 ```

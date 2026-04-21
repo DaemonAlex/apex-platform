@@ -71,10 +71,21 @@ if [[ ! -f .env ]]; then
 
   chmod 600 .env
 
-  info ".env created. Initial admin credentials:"
-  printf '  email:    dev@apex.local\n'
-  printf '  password: %s\n' "$INITIAL_ADMIN_PASSWORD_VALUE"
-  printf '\nSave this password somewhere — it will not be shown again.\n\n'
+  # Write initial admin credentials to a file the operator can `cat` then
+  # delete. Printing them to stdout leaks into terminal scrollback, shell
+  # history (if they get copy-pasted), and any pre-commit scanner that
+  # sees a "password: <value>" pattern in a shell script.
+  mkdir -p secrets
+  umask 077
+  {
+    printf 'email\tdev@apex.local\n'
+    printf 'initial_admin_password\t%s\n' "$INITIAL_ADMIN_PASSWORD_VALUE"
+  } > secrets/initial_admin_credentials.txt
+  chmod 600 secrets/initial_admin_credentials.txt
+
+  info ".env created. Initial admin credentials written to:"
+  printf '  secrets/initial_admin_credentials.txt  (chmod 600)\n'
+  printf 'Read it once, change the password after first login, then delete the file.\n\n'
 else
   info ".env already present — skipping generation"
 fi
