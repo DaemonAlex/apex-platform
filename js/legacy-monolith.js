@@ -1375,6 +1375,19 @@
                 window.TokenManager.clearToken();
             }
 
+            // Revoke the server-side refresh token and clear httpOnly cookies
+            // (P1-1 2026-04-18). Fire-and-forget — the UI state transition
+            // below shouldn't block on the network call.
+            try {
+                const csrfMatch = document.cookie.match(/(?:^|; )apex_csrf=([^;]+)/);
+                const csrf = csrfMatch ? decodeURIComponent(csrfMatch[1]) : '';
+                fetch((AppState.config && AppState.config.apiUrl ? AppState.config.apiUrl : '/api') + '/auth/logout', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: csrf ? { 'X-CSRF-Token': csrf } : {}
+                }).catch(() => {});
+            } catch (_) { /* never break logout UX on a network error */ }
+
             // Show login screen and hide app
             document.getElementById('loginScreen').style.display = 'flex';
             document.getElementById('mainApp').style.display = 'none';

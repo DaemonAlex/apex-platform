@@ -10,6 +10,7 @@ import {
 } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
 import { useTheme } from './composables/useTheme';
+import { downloadAuthenticated } from './composables/useApi';
 import { useRoomStore } from './stores/rooms';
 import { ROOM_TYPE_PRESETS } from './types';
 import type { Room, Floor, RoomCheck, Equipment } from './types';
@@ -322,9 +323,12 @@ async function deleteDoc(docId: number) {
   if (detailRoomId.value) detailDocs.value = await store.fetchDocuments('room', detailRoomId.value);
 }
 
-function downloadDoc(docId: number) {
-  const token = localStorage.getItem('apex_token');
-  window.open(`/api/room-status/documents/download/${docId}?token=${token}`, '_blank');
+async function downloadDoc(docId: number) {
+  try {
+    await downloadAuthenticated(`/api/room-status/documents/download/${docId}`);
+  } catch (e: any) {
+    msg.error(e.message || 'Download failed');
+  }
 }
 
 function formatFileSize(bytes: number) {

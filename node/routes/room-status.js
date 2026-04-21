@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const logger = require('../utils/logger');
+const { sendServerError } = require('../utils/errors');
 const { auditLog } = require('../middleware/audit');
 const { validate, body } = require('../middleware/validate');
 const { requireRole } = require('../middleware/auth');
@@ -18,198 +19,9 @@ router.use((req, res, next) => {
   return writerGate(req, res, next);
 });
 
-// Ensure all room tables exist (auto-migration)
-async function ensureRoomTables() {
-  // Locations (buildings/branches)
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS Locations (
-      id SERIAL PRIMARY KEY,
-      name VARCHAR(255) NOT NULL,
-      address VARCHAR(500),
-      city VARCHAR(100),
-      state VARCHAR(50),
-      zip VARCHAR(20),
-      contact_name VARCHAR(255),
-      contact_phone VARCHAR(50),
-      contact_email VARCHAR(255),
-      notes TEXT,
-      deleted_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-  // Floors within a location
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS Floors (
-      id SERIAL PRIMARY KEY,
-      location_id INT NOT NULL REFERENCES Locations(id),
-      name VARCHAR(50) NOT NULL,
-      sort_order INT DEFAULT 0,
-      notes TEXT,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-  // Core rooms table
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS Rooms (
-      id SERIAL PRIMARY KEY,
-      room_id VARCHAR(100) UNIQUE NOT NULL,
-      name VARCHAR(255) NOT NULL,
-      schedule_day INT NOT NULL DEFAULT 1,
-      schedule_day_name VARCHAR(20) NOT NULL DEFAULT '',
-      check_frequency VARCHAR(20) NOT NULL DEFAULT 'weekly',
-      check_day INT,
-      room_type VARCHAR(50),
-      capacity INT,
-      location VARCHAR(255),
-      floor VARCHAR(50),
-      location_id INT,
-      floor_id INT,
-      standard_id INT,
-      deleted_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-  // Add columns if they don't exist (for existing installs)
-  const newCols = [
-    { name: 'room_type', type: 'VARCHAR(50)' },
-    { name: 'capacity', type: 'INT' },
-    { name: 'location', type: 'VARCHAR(255)' },
-    { name: 'floor', type: 'VARCHAR(50)' },
-    { name: 'standard_id', type: 'INT' },
-    { name: 'location_id', type: 'INT' },
-    { name: 'floor_id', type: 'INT' },
-    { name: 'check_frequency', type: "VARCHAR(20) DEFAULT 'weekly'" },
-    { name: 'check_day', type: 'INT' }
-  ];
-  for (const col of newCols) {
-    await pool.query(`
-      ALTER TABLE Rooms ADD COLUMN IF NOT EXISTS ${col.name} ${col.type}
-    `).catch(() => {});
-  }
-
-  // Check history - each row is one room check by a tech
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS RoomCheckHistory (
-      id SERIAL PRIMARY KEY,
-      room_id VARCHAR(100) NOT NULL,
-      checked_by VARCHAR(255) NOT NULL,
-      rag_status VARCHAR(20) NOT NULL DEFAULT 'green',
-      issue_found BOOLEAN DEFAULT FALSE,
-      issue_description TEXT,
-      ticket_number VARCHAR(100),
-      check_1_video BOOLEAN DEFAULT FALSE,
-      check_2_display BOOLEAN DEFAULT FALSE,
-      check_3_audio BOOLEAN DEFAULT FALSE,
-      check_4_camera BOOLEAN DEFAULT FALSE,
-      check_5_network BOOLEAN DEFAULT FALSE,
-      notes TEXT,
-      checked_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-  // Add new columns to existing check history table.
-  // limited_functionality and non_functional_reason were added by the SELECT
-  // in GET /api/room-status but never added to the schema, so a fresh DB or
-  // any DB that didn't go through a manual migration would 500 on the very
-  // first room-status read. Fixed in 2026-04 by adding them here.
-  for (const col of [
-    { name: 'issue_found', type: 'BOOLEAN DEFAULT FALSE' },
-    { name: 'issue_description', type: 'TEXT' },
-    { name: 'ticket_number', type: 'VARCHAR(100)' },
-    { name: 'limited_functionality', type: 'BOOLEAN DEFAULT FALSE' },
-    { name: 'non_functional_reason', type: 'TEXT' }
-  ]) {
-    await pool.query(`ALTER TABLE RoomCheckHistory ADD COLUMN IF NOT EXISTS ${col.name} ${col.type}`).catch(() => {});
-  }
-
-  // Equipment inventory per room
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS RoomEquipment (
-      id SERIAL PRIMARY KEY,
-      room_id VARCHAR(100) NOT NULL,
-      category VARCHAR(50) NOT NULL,
-      make VARCHAR(100),
-      model VARCHAR(150),
-      serial_number VARCHAR(100),
-      firmware_version VARCHAR(50),
-      install_date DATE,
-      warranty_end DATE,
-      status VARCHAR(50) DEFAULT 'active',
-      notes TEXT,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-  // Room standards (what equipment a room type SHOULD have)
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS RoomStandards (
-      id SERIAL PRIMARY KEY,
-      name VARCHAR(100) NOT NULL,
-      description TEXT,
-      required_equipment JSONB DEFAULT '[]',
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-  // Room technical details - the "room passport"
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS RoomTechDetails (
-      id SERIAL PRIMARY KEY,
-      room_id VARCHAR(100) NOT NULL UNIQUE,
-      platform VARCHAR(50),
-      platform_version VARCHAR(50),
-      cisco_workspace_id VARCHAR(100),
-      cisco_activation_code VARCHAR(100),
-      cisco_device_serial VARCHAR(100),
-      cisco_registration_status VARCHAR(50),
-      network_jacks JSONB DEFAULT '[]',
-      devices JSONB DEFAULT '[]',
-      cable_runs JSONB DEFAULT '[]',
-      credentials JSONB DEFAULT '[]',
-      vlan VARCHAR(50),
-      switch_name VARCHAR(100),
-      switch_port VARCHAR(50),
-      poe_status VARCHAR(50),
-      wifi_ssid VARCHAR(100),
-      notes TEXT,
-      updated_by VARCHAR(255),
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-  // Documents - polymorphic attachment to rooms, projects, vendors, equipment
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS Documents (
-      id SERIAL PRIMARY KEY,
-      entity_type VARCHAR(50) NOT NULL,
-      entity_id VARCHAR(100) NOT NULL,
-      filename VARCHAR(255) NOT NULL,
-      original_name VARCHAR(255) NOT NULL,
-      file_size INTEGER,
-      mime_type VARCHAR(100),
-      doc_type VARCHAR(50) DEFAULT 'other',
-      description TEXT,
-      uploaded_by VARCHAR(255),
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-}
-
-let tablesEnsured = false;
-
 // GET /api/room-status - Get all rooms with latest check status
 router.get('/', async (req, res) => {
   try {
-    if (!tablesEnsured) { await ensureRoomTables(); tablesEnsured = true; }
-
     // Get all non-deleted rooms with latest check + equipment count + location/floor
     const result = await pool.query(`
       SELECT
@@ -295,8 +107,7 @@ router.get('/', async (req, res) => {
     res.json({ rooms });
 
   } catch (error) {
-    logger.error('Error fetching room status', { error: error.message });
-    res.status(500).json({ error: 'Failed to fetch room status', details: error.message });
+    return sendServerError(res, 'Failed to fetch room status', error);
   }
 });
 
@@ -375,8 +186,7 @@ router.post('/',
     }
 
   } catch (error) {
-    logger.error('Error saving room/check', { error: error.message });
-    res.status(500).json({ error: 'Failed to save room/check', details: error.message });
+    return sendServerError(res, 'Failed to save room/check', error);
   }
 });
 
@@ -407,8 +217,7 @@ router.get('/:roomId/history', async (req, res) => {
     res.json({ history });
 
   } catch (error) {
-    logger.error('Error fetching room history', { error: error.message });
-    res.status(500).json({ error: 'Failed to fetch room history', details: error.message });
+    return sendServerError(res, 'Failed to fetch room history', error);
   }
 });
 
@@ -457,8 +266,7 @@ router.put('/:roomId', auditLog('Room updated', 'room', 'info'), async (req, res
 
     res.json({ success: true, room: result.rows[0] });
   } catch (error) {
-    logger.error('Error updating room', { error: error.message });
-    res.status(500).json({ error: 'Failed to update room', details: error.message });
+    return sendServerError(res, 'Failed to update room', error);
   }
 });
 
@@ -474,8 +282,7 @@ router.delete('/:roomId', auditLog('Room deleted', 'room', 'warning'), async (re
     res.json({ success: true, message: 'Room deleted successfully (all check history preserved)' });
 
   } catch (error) {
-    logger.error('Error deleting room', { error: error.message });
-    res.status(500).json({ error: 'Failed to delete room', details: error.message });
+    return sendServerError(res, 'Failed to delete room', error);
   }
 });
 
@@ -484,7 +291,7 @@ router.delete('/:roomId', auditLog('Room deleted', 'room', 'warning'), async (re
 // GET /api/room-status/locations - List all locations with floor counts
 router.get('/locations/list', async (req, res) => {
   try {
-    if (!tablesEnsured) { await ensureRoomTables(); tablesEnsured = true; }
+
     const result = await pool.query(`
       SELECT l.*, COUNT(DISTINCT f.id) as floor_count, COUNT(DISTINCT r.room_id) as room_count
       FROM Locations l
@@ -517,7 +324,7 @@ router.get('/locations/list', async (req, res) => {
 // POST /api/room-status/locations - Create a location
 router.post('/locations', auditLog('Location created', 'room', 'info'), async (req, res) => {
   try {
-    if (!tablesEnsured) { await ensureRoomTables(); tablesEnsured = true; }
+
     const { name, address, city, state, zip, contactName, contactPhone, contactEmail, notes } = req.body;
     if (!name) return res.status(400).json({ error: 'Location name is required' });
     const result = await pool.query(
@@ -698,7 +505,7 @@ router.delete('/equipment/:id', auditLog('Equipment deleted', 'room', 'warning')
 // GET /api/room-status/standards - Get all room standards
 router.get('/standards/list', async (req, res) => {
   try {
-    if (!tablesEnsured) { await ensureRoomTables(); tablesEnsured = true; }
+
     const result = await pool.query('SELECT * FROM RoomStandards ORDER BY name');
     res.json({ standards: result.rows.map(r => ({
       id: r.id,
@@ -760,7 +567,7 @@ router.delete('/standards/:id', auditLog('Room standard deleted', 'room', 'warni
 // GET /api/room-status/compliance - Room compliance scorecard
 router.get('/compliance/scorecard', async (req, res) => {
   try {
-    if (!tablesEnsured) { await ensureRoomTables(); tablesEnsured = true; }
+
 
     // Get all rooms with their standard, equipment, and latest check status
     const roomsResult = await pool.query(`
@@ -833,7 +640,7 @@ router.get('/compliance/scorecard', async (req, res) => {
 // GET /api/room-status/:roomId/tech - Get technical details for a room
 router.get('/:roomId/tech', async (req, res) => {
   try {
-    if (!tablesEnsured) { await ensureRoomTables(); tablesEnsured = true; }
+
     const { roomId } = req.params;
     const result = await pool.query('SELECT * FROM RoomTechDetails WHERE room_id = $1', [roomId]);
     if (result.rows.length === 0) {

@@ -25,6 +25,7 @@ node/logs/
 *.db
 *.sqlite
 *.sqlite3
+*.dump
 
 # Temporary files
 *.tmp
@@ -70,3 +71,7 @@ client/node_modules/
 
 # Claude Code local state (plans, memory, session data)
 .claude/
+
+# Session prompts (not project docs)
+DRIZZLE-MIGRATION-PROMPT.md
+secrets/

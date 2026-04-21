@@ -8,6 +8,7 @@ import {
 import type { DataTableColumns, UploadFileInfo } from 'naive-ui';
 import { h } from 'vue';
 import { useTheme } from '../../composables/useTheme';
+import { downloadAuthenticated } from '../../composables/useApi';
 
 const props = defineProps<{ projectId: string }>();
 const msg = useMessage();
@@ -93,8 +94,11 @@ async function uploadDoc() {
 }
 
 async function downloadDoc(id: number) {
-  const token = localStorage.getItem('apex_token');
-  window.open('/api/documents/' + id + '/download?token=' + token, '_blank');
+  try {
+    await downloadAuthenticated('/api/documents/' + id + '/download');
+  } catch (e: any) {
+    msg.error(e.message || 'Download failed');
+  }
 }
 
 async function deleteDoc(id: number) {

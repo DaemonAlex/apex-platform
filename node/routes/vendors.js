@@ -15,43 +15,9 @@ router.use((req, res, next) => {
   return writerGate(req, res, next);
 });
 
-// Auto-create tables
-async function ensureVendorTables() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS Vendors (
-      id SERIAL PRIMARY KEY,
-      name VARCHAR(255) NOT NULL,
-      type VARCHAR(50) NOT NULL DEFAULT 'external',
-      category VARCHAR(100),
-      website VARCHAR(255),
-      address VARCHAR(500),
-      notes TEXT,
-      contacts JSONB DEFAULT '[]',
-      deleted_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS VendorAssignments (
-      id SERIAL PRIMARY KEY,
-      vendor_id INTEGER NOT NULL REFERENCES Vendors(id),
-      entity_type VARCHAR(50) NOT NULL,
-      entity_id VARCHAR(100) NOT NULL,
-      role VARCHAR(100),
-      notes TEXT,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-}
-
-let tablesReady = false;
-
 // GET /api/vendors - List all vendors
 router.get('/', async (req, res) => {
   try {
-    if (!tablesReady) { await ensureVendorTables(); tablesReady = true; }
     const result = await pool.query(`
       SELECT v.*,
         (SELECT COUNT(*) FROM VendorAssignments va WHERE va.vendor_id = v.id AND va.entity_type = 'project') as project_count,
@@ -78,7 +44,6 @@ router.get('/', async (req, res) => {
 // GET /api/vendors/:id - Get vendor detail with assignments
 router.get('/:id', async (req, res) => {
   try {
-    if (!tablesReady) { await ensureVendorTables(); tablesReady = true; }
     const vResult = await pool.query('SELECT * FROM Vendors WHERE id = $1 AND deleted_at IS NULL', [req.params.id]);
     if (vResult.rows.length === 0) return res.status(404).json({ error: 'Vendor not found' });
     const v = vResult.rows[0];
@@ -103,7 +68,6 @@ router.get('/:id', async (req, res) => {
 // POST /api/vendors - Create vendor
 router.post('/', auditLog('Vendor created', 'vendor', 'info'), async (req, res) => {
   try {
-    if (!tablesReady) { await ensureVendorTables(); tablesReady = true; }
     const { name, type, category, website, address, notes, contacts } = req.body;
     if (!name) return res.status(400).json({ error: 'Name is required' });
 
@@ -183,7 +147,6 @@ router.delete('/assignments/:id', auditLog('Vendor assignment removed', 'vendor'
 // GET /api/vendors/for/:entityType/:entityId - Get vendors assigned to an entity
 router.get('/for/:entityType/:entityId', async (req, res) => {
   try {
-    if (!tablesReady) { await ensureVendorTables(); tablesReady = true; }
     const { entityType, entityId } = req.params;
     const result = await pool.query(`
       SELECT v.id, v.name, v.type, v.category, v.contacts, va.role, va.notes as assignment_notes, va.id as assignment_id

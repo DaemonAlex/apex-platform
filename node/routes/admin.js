@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const logger = require('../utils/logger');
+const { sendServerError } = require('../utils/errors');
 const { auditLog } = require('../middleware/audit');
 const router = express.Router();
 
@@ -164,11 +165,7 @@ router.post('/fix-active-projects', auditLog('Admin: fix active projects', 'admi
     });
 
   } catch (error) {
-    logger.error('Error fixing active projects:', error);
-    res.status(500).json({
-      error: 'Failed to fix active projects',
-      details: error.message
-    });
+    return sendServerError(res, 'Failed to fix active projects', error);
   }
 });
 
@@ -361,30 +358,13 @@ router.post('/load-full-wintrust-data', auditLog('Admin: load Wintrust data', 'a
     });
 
   } catch (error) {
-    logger.error('Error loading Wintrust data:', error);
-    res.status(500).json({ error: 'Failed to load Wintrust data', details: error.message });
+    return sendServerError(res, 'Failed to load Wintrust data', error);
   }
 });
 
-// Add time tracking columns to database
+// Time tracking columns are managed by Drizzle schema (drizzle/schema.ts)
 router.post('/add-time-tracking', auditLog('Admin: add time tracking columns', 'admin', 'info'), async (req, res) => {
-  try {
-    // Add time tracking columns using ADD COLUMN IF NOT EXISTS
-    await pool.query(`
-      ALTER TABLE Projects ADD COLUMN IF NOT EXISTS estimatedHours NUMERIC(10,2)
-    `);
-    await pool.query(`
-      ALTER TABLE Projects ADD COLUMN IF NOT EXISTS actualHours NUMERIC(10,2)
-    `);
-    await pool.query(`
-      ALTER TABLE Projects ADD COLUMN IF NOT EXISTS timeEntries TEXT
-    `);
-
-    res.json({ message: 'Time tracking columns added successfully' });
-  } catch (error) {
-    logger.error('Error adding time tracking columns:', error);
-    res.status(500).json({ error: 'Failed to add time tracking columns', details: error.message });
-  }
+  res.json({ message: 'Time tracking columns already managed by schema' });
 });
 
 // Update projects with time tracking data
@@ -481,8 +461,7 @@ router.post('/update-time-tracking', auditLog('Admin: update time tracking data'
 
     res.json({ message: 'Time tracking data updated successfully', projectsUpdated: projects.rows.length });
   } catch (error) {
-    logger.error('Error updating time tracking:', error);
-    res.status(500).json({ error: 'Failed to update time tracking', details: error.message });
+    return sendServerError(res, 'Failed to update time tracking', error);
   }
 });
 
@@ -490,21 +469,6 @@ router.post('/update-time-tracking', auditLog('Admin: update time tracking data'
 router.post('/add-rag-status', auditLog('Admin: add RAG status', 'admin', 'info'), async (req, res) => {
   try {
     logger.info('🚦 Adding RAG status calculations...');
-
-    // Add RAG status columns if they don't exist
-    try {
-      await pool.query(`
-        ALTER TABLE Projects ADD COLUMN IF NOT EXISTS ragStatus VARCHAR(10)
-      `);
-
-      await pool.query(`
-        ALTER TABLE Projects ADD COLUMN IF NOT EXISTS ragReason VARCHAR(255)
-      `);
-
-      logger.info('✅ RAG status columns added');
-    } catch (columnError) {
-      logger.info('RAG columns may already exist, continuing...');
-    }
 
     // RAG Status Calculation Logic
     function calculateProjectRAG(project) {
@@ -644,8 +608,7 @@ router.post('/add-rag-status', auditLog('Admin: add RAG status', 'admin', 'info'
     });
 
   } catch (error) {
-    logger.error('Error adding RAG status:', error);
-    res.status(500).json({ error: 'Failed to add RAG status', details: error.message });
+    return sendServerError(res, 'Failed to add RAG status', error);
   }
 });
 
@@ -666,8 +629,7 @@ router.post('/reload-projects', auditLog('Admin: reload projects', 'admin', 'inf
 
     res.json({ projects });
   } catch (error) {
-    logger.error('Error reloading projects:', error);
-    res.status(500).json({ error: 'Failed to reload projects', details: error.message });
+    return sendServerError(res, 'Failed to reload projects', error);
   }
 });
 
@@ -697,8 +659,7 @@ router.post('/cleanup-database', auditLog('Admin: cleanup database', 'admin', 'c
       sampleRecords: allRecords.rows
     });
   } catch (error) {
-    logger.error('Error cleaning up database:', error);
-    res.status(500).json({ error: 'Failed to cleanup database', details: error.message });
+    return sendServerError(res, 'Failed to cleanup database', error);
   }
 });
 
@@ -744,11 +705,7 @@ router.post('/cleanup-users', auditLog('Admin: cleanup users', 'admin', 'critica
     });
 
   } catch (error) {
-    logger.error('Error cleaning up users:', error);
-    res.status(500).json({
-      error: 'Failed to cleanup users',
-      details: error.message
-    });
+    return sendServerError(res, 'Failed to cleanup users', error);
   }
 });
 

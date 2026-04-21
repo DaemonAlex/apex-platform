@@ -1,9 +1,11 @@
 const express = require('express');
 const { pool } = require('../db');
 const logger = require('../utils/logger');
+const { sendServerError } = require('../utils/errors');
 const { auditLog } = require('../middleware/audit');
 const { validate, body, param } = require('../middleware/validate');
 const { requireRole, requireSelfOrAdmin } = require('../middleware/auth');
+const totp = require('../utils/totp');
 const router = express.Router();
 
 // Admin role gate reused throughout this file for user-management routes.
@@ -52,15 +54,6 @@ router.get('/me', async (req, res) => {
 // Get all users
 router.get('/', async (req, res) => {
   try {
-    // First, ensure avatar column exists
-    try {
-      await pool.query(`
-        ALTER TABLE Users ADD COLUMN IF NOT EXISTS avatar TEXT
-      `);
-    } catch (e) {
-      logger.warn('Avatar column may already exist', { error: e.message });
-    }
-
     const result = await pool.query(`
       SELECT id, name, email, role, preferences, avatar, created_at, updated_at
       FROM Users
@@ -91,8 +84,7 @@ router.get('/', async (req, res) => {
     res.json({ users });
     // Connection pool kept open for reuse
   } catch (error) {
-    logger.error('Get users error', { error: error.message });
-    res.status(500).json({ error: 'Failed to fetch users', details: error.message });
+    return sendServerError(res, 'Failed to fetch users', error);
   }
 });
 
@@ -157,8 +149,7 @@ router.put('/:id',
     res.json({ user: responseUser, message: 'User updated successfully' });
     // Connection pool kept open for reuse
   } catch (error) {
-    logger.error('Update user error', { error: error.message, userId: req.params.id });
-    res.status(500).json({ error: 'Failed to update user', details: error.message });
+    return sendServerError(res, 'Failed to update user', error, { userId: req.params.id });
   }
 });
 
@@ -227,8 +218,7 @@ router.put('/:id/password',
     res.json({ message: 'Password changed successfully' });
 
   } catch (error) {
-    logger.error('Change password error', { error: error.message, userId: req.params.id });
-    res.status(500).json({ error: 'Failed to change password', details: error.message });
+    return sendServerError(res, 'Failed to change password', error, { userId: req.params.id });
   }
 });
 
@@ -259,8 +249,7 @@ router.put('/:id/preferences', requireSelfOrAdmin('id'), async (req, res) => {
     res.json({ message: 'Preferences updated successfully', preferences });
 
   } catch (error) {
-    logger.error('Update preferences error', { error: error.message, userId: req.params.id });
-    res.status(500).json({ error: 'Failed to update preferences', details: error.message });
+    return sendServerError(res, 'Failed to update preferences', error, { userId: req.params.id });
   }
 });
 
@@ -298,8 +287,7 @@ router.put('/:id/avatar', requireSelfOrAdmin('id'), async (req, res) => {
     res.json({ message: 'Avatar updated successfully' });
 
   } catch (error) {
-    logger.error('Update avatar error', { error: error.message, userId: req.params.id });
-    res.status(500).json({ error: 'Failed to update avatar', details: error.message });
+    return sendServerError(res, 'Failed to update avatar', error, { userId: req.params.id });
   }
 });
 
@@ -327,8 +315,7 @@ router.delete('/:id/avatar', requireSelfOrAdmin('id'), async (req, res) => {
     res.json({ message: 'Avatar removed successfully' });
 
   } catch (error) {
-    logger.error('Remove avatar error', { error: error.message, userId: req.params.id });
-    res.status(500).json({ error: 'Failed to remove avatar', details: error.message });
+    return sendServerError(res, 'Failed to remove avatar', error, { userId: req.params.id });
   }
 });
 
@@ -393,8 +380,7 @@ router.post('/',
     });
 
   } catch (error) {
-    logger.error('Create user error', { error: error.message });
-    res.status(500).json({ error: 'Failed to create user', details: error.message });
+    return sendServerError(res, 'Failed to create user', error);
   }
 });
 
@@ -426,8 +412,7 @@ router.delete('/:id',
     res.json({ message: 'User deleted successfully' });
 
   } catch (error) {
-    logger.error('Delete user error', { error: error.message, userId: req.params.id });
-    res.status(500).json({ error: 'Failed to delete user', details: error.message });
+    return sendServerError(res, 'Failed to delete user', error, { userId: req.params.id });
   }
 });
 
@@ -497,9 +482,34 @@ router.post('/:id/reset-password',
     });
 
   } catch (error) {
-    logger.error('Reset password error', { error: error.message, userId: req.params.id });
-    res.status(500).json({ error: 'Failed to reset password', details: error.message });
+    return sendServerError(res, 'Failed to reset password', error, { userId: req.params.id });
   }
 });
+
+// Admin-driven force-disable of a user's 2FA (P1-3 2026-04-18). For when a
+// user loses both their authenticator AND their backup codes and needs
+// help from an admin to re-enroll. The admin is NOT required to present a
+// TOTP code (unlike the self-service /2fa/disable); the action is audited
+// heavily because it's effectively an MFA bypass.
+router.post('/:id/2fa/disable',
+  adminOnly,
+  validate([ param('id').isInt({ min: 1 }).withMessage('User ID must be a positive integer') ]),
+  auditLog('Admin force-disabled 2FA', 'auth', 'critical'),
+  async (req, res) => {
+    try {
+      const targetId = parseInt(req.params.id, 10);
+      const exists = await pool.query('SELECT id, email FROM Users WHERE id = $1', [targetId]);
+      if (!exists.rows.length) return res.status(404).json({ error: 'User not found' });
+      await totp.disable(targetId);
+      logger.security('Admin force-disabled TOTP', {
+        adminId: req.user.userId, adminEmail: req.user.email,
+        targetId, targetEmail: exists.rows[0].email, ip: req.ip,
+      });
+      return res.json({ enabled: false });
+    } catch (error) {
+      return sendServerError(res, 'Failed to disable 2FA', error, { targetId: req.params.id });
+    }
+  }
+);
 
 module.exports = router;

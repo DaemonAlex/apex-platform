@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const logger = require('../utils/logger');
+const { sendServerError } = require('../utils/errors');
 const { validate, body, query, isPositiveInt } = require('../middleware/validate');
 const { requireRole } = require('../middleware/auth');
 const router = express.Router();
@@ -68,8 +69,7 @@ router.post('/log',
     res.json({ message: 'Audit log entry created successfully' });
 
   } catch (error) {
-    logger.error('Audit log error', { error: error.message });
-    res.status(500).json({ error: 'Failed to create audit log entry', details: error.message });
+    return sendServerError(res, 'Failed to create audit log entry', error);
   }
 });
 
@@ -136,8 +136,7 @@ router.get('/log',
 
     // Connection pool kept open for reuse
   } catch (error) {
-    logger.error('Get audit log error', { error: error.message });
-    res.status(500).json({ error: 'Failed to retrieve audit log', details: error.message });
+    return sendServerError(res, 'Failed to retrieve audit log', error);
   }
 });
 

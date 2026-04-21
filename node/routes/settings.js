@@ -1,5 +1,6 @@
 const express = require('express');
 const { pool } = require('../db');
+const { sendServerError } = require('../utils/errors');
 const { auditLog } = require('../middleware/audit');
 const { requireRole } = require('../middleware/auth');
 const router = express.Router();
@@ -11,34 +12,21 @@ const router = express.Router();
 // project_id_prefix that the WTB_ filter relies on.
 const adminOnly = requireRole(['admin', 'superadmin', 'owner']);
 
-// Ensure AppConfig table exists
-async function ensureConfigTable() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS AppConfig (
-      key VARCHAR(100) PRIMARY KEY,
-      value JSONB NOT NULL,
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-}
-
 // GET /api/settings - All settings
 router.get('/', async (req, res) => {
   try {
-    await ensureConfigTable();
     const result = await pool.query('SELECT key, value FROM AppConfig');
     const settings = {};
     result.rows.forEach(r => { settings[r.key] = r.value; });
     res.json(settings);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch settings', details: error.message });
+    return sendServerError(res, 'Failed to fetch settings', error);
   }
 });
 
 // GET /api/settings/business-lines - Business lines list
 router.get('/business-lines', async (req, res) => {
   try {
-    await ensureConfigTable();
     const result = await pool.query("SELECT value FROM AppConfig WHERE key = 'business_lines'");
     res.json({ businessLines: result.rows[0]?.value || [] });
   } catch (error) {
@@ -64,7 +52,6 @@ router.put('/business-lines', adminOnly, auditLog('Business lines updated', 'adm
 // GET /api/settings/project-prefix - Project ID prefix
 router.get('/project-prefix', async (req, res) => {
   try {
-    await ensureConfigTable();
     const result = await pool.query("SELECT value FROM AppConfig WHERE key = 'project_id_prefix'");
     res.json({ prefix: result.rows[0]?.value || 'WTB' });
   } catch (error) {

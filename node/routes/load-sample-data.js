@@ -1,5 +1,6 @@
 const express = require('express');
 const { pool } = require('../db');
+const { sendServerError } = require('../utils/errors');
 const router = express.Router();
 
 // Load Wintrust sample data and clear localhost data
@@ -77,11 +78,7 @@ router.post('/migrate-wintrust-data', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Migration error:', error);
-    res.status(500).json({
-      error: 'Failed to migrate Wintrust data',
-      details: error.message
-    });
+    return sendServerError(res, 'Failed to migrate Wintrust data', error);
   }
 });
 

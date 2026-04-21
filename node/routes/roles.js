@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const logger = require('../utils/logger');
+const { sendServerError } = require('../utils/errors');
 const { auditLog } = require('../middleware/audit');
 const { validate, body, param } = require('../middleware/validate');
 const { requireRole } = require('../middleware/auth');
@@ -56,23 +57,8 @@ const PERMISSION_CATALOG = [
   ]},
 ];
 
-// Ensure Roles table exists and seed defaults
-async function ensureRolesTable() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS Roles (
-      id SERIAL PRIMARY KEY,
-      name VARCHAR(50) UNIQUE NOT NULL,
-      display_name VARCHAR(100) NOT NULL,
-      description TEXT DEFAULT '',
-      permissions JSONB NOT NULL DEFAULT '[]',
-      priority INTEGER DEFAULT 0,
-      is_system BOOLEAN DEFAULT FALSE,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-  // Seed defaults if table is empty
+// Seed default roles if table is empty (table managed by Drizzle schema)
+async function seedDefaultRoles() {
   const count = await pool.query('SELECT COUNT(*) as total FROM Roles');
   if (parseInt(count.rows[0].total) === 0) {
     for (const role of DEFAULT_ROLES) {
@@ -85,13 +71,13 @@ async function ensureRolesTable() {
   }
 }
 
-// Lazy init - runs on first request instead of module load
-let rolesTableReady = false;
+// Runs once on first request to seed defaults if needed
+let rolesSeedChecked = false;
 
 // Get all roles with user counts
 router.get('/', async (req, res) => {
   try {
-    if (!rolesTableReady) { await ensureRolesTable(); rolesTableReady = true; }
+    if (!rolesSeedChecked) { await seedDefaultRoles(); rolesSeedChecked = true; }
     const result = await pool.query(`
       SELECT r.*, COALESCE(uc.user_count, 0) as user_count
       FROM Roles r
@@ -114,8 +100,7 @@ router.get('/', async (req, res) => {
 
     res.json(roles);
   } catch (error) {
-    logger.error('Get roles error', { error: error.message });
-    res.status(500).json({ error: 'Failed to fetch roles', details: error.message });
+    return sendServerError(res, 'Failed to fetch roles', error);
   }
 });
 
@@ -124,8 +109,7 @@ router.get('/permissions', async (req, res) => {
   try {
     res.json({ categories: PERMISSION_CATALOG });
   } catch (error) {
-    logger.error('Get permissions error', { error: error.message });
-    res.status(500).json({ error: 'Failed to fetch permissions', details: error.message });
+    return sendServerError(res, 'Failed to fetch permissions', error);
   }
 });
 
@@ -139,7 +123,7 @@ router.post('/',
   auditLog('Role created', 'admin', 'info'),
   async (req, res) => {
   try {
-    if (!rolesTableReady) { await ensureRolesTable(); rolesTableReady = true; }
+    if (!rolesSeedChecked) { await seedDefaultRoles(); rolesSeedChecked = true; }
     const { name, displayName, description = '', permissions = [], priority = 0 } = req.body;
 
     // Check for duplicate name
@@ -169,8 +153,7 @@ router.post('/',
       }
     });
   } catch (error) {
-    logger.error('Create role error', { error: error.message });
-    res.status(500).json({ error: 'Failed to create role', details: error.message });
+    return sendServerError(res, 'Failed to create role', error);
   }
 });
 
@@ -184,7 +167,7 @@ router.put('/:id',
   auditLog('Role updated', 'admin', 'info'),
   async (req, res) => {
   try {
-    if (!rolesTableReady) { await ensureRolesTable(); rolesTableReady = true; }
+    if (!rolesSeedChecked) { await seedDefaultRoles(); rolesSeedChecked = true; }
     const roleId = req.params.id;
     const { name, displayName, description, permissions = [] } = req.body;
 
@@ -230,15 +213,14 @@ router.put('/:id',
       }
     });
   } catch (error) {
-    logger.error('Update role error', { error: error.message });
-    res.status(500).json({ error: 'Failed to update role', details: error.message });
+    return sendServerError(res, 'Failed to update role', error);
   }
 });
 
 // Delete role (admin only)
 router.delete('/:id', adminOnly, auditLog('Role deleted', 'admin', 'warning'), async (req, res) => {
   try {
-    if (!rolesTableReady) { await ensureRolesTable(); rolesTableReady = true; }
+    if (!rolesSeedChecked) { await seedDefaultRoles(); rolesSeedChecked = true; }
     const roleId = req.params.id;
 
     const existing = await pool.query('SELECT * FROM Roles WHERE id = $1', [roleId]);
@@ -261,8 +243,7 @@ router.delete('/:id', adminOnly, auditLog('Role deleted', 'admin', 'warning'), a
 
     res.json({ message: 'Role deleted successfully' });
   } catch (error) {
-    logger.error('Delete role error', { error: error.message });
-    res.status(500).json({ error: 'Failed to delete role', details: error.message });
+    return sendServerError(res, 'Failed to delete role', error);
   }
 });
 

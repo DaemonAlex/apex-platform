@@ -16,6 +16,7 @@ tls.DEFAULT_MIN_VERSION = process.env.TLS_MIN_VERSION || 'TLSv1.2';
 
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
@@ -23,7 +24,7 @@ require('dotenv').config();
 const logger = require('./utils/logger');
 
 // Import authentication middleware
-const { authenticateToken, requireRole } = require('./middleware/auth');
+const { authenticateToken, requireRole, csrfProtection } = require('./middleware/auth');
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -98,12 +99,20 @@ app.use(cors({
   origin: process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',') : ['http://localhost', 'http://localhost:80', 'https://daemonscripts.com'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-auth-token']
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-auth-token', 'X-CSRF-Token']
 }));
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Cookie parsing (P1-1 2026-04-18) — required for httpOnly auth cookies.
+app.use(cookieParser());
+
+// CSRF double-submit (P1-1) — only enforces when the caller is cookie-authed.
+// Mounted globally so it runs before every route, including /api/auth/refresh
+// and /api/auth/logout.
+app.use(csrfProtection);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -151,9 +160,37 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start server
-app.listen(PORT, '0.0.0.0', () => {
-  logger.info('APEX Backend API started', { port: PORT, environment: process.env.NODE_ENV || 'development' });
+// Verify critical tables exist before accepting traffic.
+// Schema is managed by Drizzle (drizzle/schema.ts). If tables are missing,
+// run: npm run db:push
+const { pool } = require('./db');
+async function verifySchema() {
+  try {
+    const result = await pool.query(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`
+    );
+    const tables = result.rows.map(r => r.table_name);
+    const required = ['users', 'projects', 'roles', 'fieldops', 'auditlog', 'appconfig', 'rooms', 'vendors'];
+    const missing = required.filter(t => !tables.includes(t));
+    if (missing.length > 0) {
+      logger.error('Missing required tables - run: npm run db:push', { missing });
+      process.exit(1);
+    }
+    logger.info(`Schema verified: ${tables.length} tables present`);
+  } catch (err) {
+    logger.error('Schema verification failed', { error: err.message });
+    process.exit(1);
+  }
+}
+
+// Start server. Bound to 127.0.0.1 (2026-04-17 P0-1 hardening) — nginx
+// reaches the backend on localhost and no remote client needs direct access.
+// Override with APEX_BIND_HOST only if the deployment topology changes.
+const BIND_HOST = process.env.APEX_BIND_HOST || '127.0.0.1';
+verifySchema().then(() => {
+  app.listen(PORT, BIND_HOST, () => {
+    logger.info('APEX Backend API started', { host: BIND_HOST, port: PORT, environment: process.env.NODE_ENV || 'development' });
+  });
 });
 
 module.exports = app;

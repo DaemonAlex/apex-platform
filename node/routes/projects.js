@@ -1,9 +1,10 @@
 const express = require('express');
 const { pool } = require('../db');
 const logger = require('../utils/logger');
+const { sendServerError } = require('../utils/errors');
 const { auditLog } = require('../middleware/audit');
 const { validate, body, param } = require('../middleware/validate');
-const { requireRole } = require('../middleware/auth');
+const { requireRole, getProjectAccess, visibleProjectIds, PROJECT_ADMIN_ROLES } = require('../middleware/auth');
 const router = express.Router();
 
 // Reads (GET/HEAD/OPTIONS) are open to all logged-in users so auditors and
@@ -17,6 +18,39 @@ router.use((req, res, next) => {
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
   return writerGate(req, res, next);
 });
+
+// Per-project membership guard — added 2026-04-17 as the IDOR fix.
+// Fires automatically whenever a route matches :id or :projectId. Returns
+// 404 on non-membership to avoid leaking which project ids exist. Admins,
+// superadmins, and owners bypass. Writer-member ('owner' / 'editor') is
+// required for non-GET methods; 'viewer' membership is read-only.
+async function projectIdGuard(req, res, next, projectId) {
+  if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+  try {
+    const access = await getProjectAccess(req.user, projectId);
+    if (!access) {
+      logger.security('Project access denied', {
+        userId: req.user.userId,
+        email: req.user.email,
+        role: req.user.role,
+        projectId,
+        route: req.originalUrl,
+        ip: req.ip,
+      });
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    const isRead = req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS';
+    if (!isRead && access !== 'admin' && access !== 'owner' && access !== 'editor') {
+      return res.status(403).json({ error: 'Read-only access to this project' });
+    }
+    req.projectAccess = access;
+    next();
+  } catch (err) {
+    return sendServerError(res, 'Authorization check failed', err, { projectId });
+  }
+}
+router.param('id', projectIdGuard);
+router.param('projectId', projectIdGuard);
 
 // Map PostgreSQL lowercase columns to camelCase for frontend compatibility
 function mapProjectRow(row) {
@@ -121,84 +155,31 @@ function removeTaskFromProject(tasks, taskId) {
   return false;
 }
 
-// Initialize Projects table
-async function initializeProjectsTable() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS Projects (
-      id VARCHAR(50) PRIMARY KEY,
-      name VARCHAR(255) NOT NULL,
-      client VARCHAR(255),
-      type VARCHAR(100),
-      status VARCHAR(50) DEFAULT 'planning',
-      budget NUMERIC(12,2) DEFAULT 0,
-      actualBudget NUMERIC(12,2) DEFAULT 0,
-      startDate TIMESTAMPTZ,
-      endDate TIMESTAMPTZ,
-      description TEXT,
-      tasks JSONB, -- native JSON support
-      requestorInfo VARCHAR(500),
-      siteLocation VARCHAR(500),
-      businessLine VARCHAR(255),
-      progress INT DEFAULT 0,
-      priority VARCHAR(50),
-      requestDate TIMESTAMPTZ,
-      dueDate TIMESTAMPTZ,
-      estimatedBudget NUMERIC(12,2) DEFAULT 0,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-  // Add missing columns if they don't exist (migration)
-  const columns = [
-    { name: 'requestorInfo', def: 'VARCHAR(500)' },
-    { name: 'siteLocation', def: 'VARCHAR(500)' },
-    { name: 'businessLine', def: 'VARCHAR(255)' },
-    { name: 'progress', def: 'INT DEFAULT 0' },
-    { name: 'requestDate', def: 'TIMESTAMPTZ' },
-    { name: 'dueDate', def: 'TIMESTAMPTZ' },
-    { name: 'estimatedBudget', def: 'NUMERIC(12,2) DEFAULT 0' },
-    { name: 'costCenter', def: 'VARCHAR(255)' },
-    { name: 'purchaseOrder', def: 'VARCHAR(255)' },
-    { name: 'parent_project_id', def: 'VARCHAR(50)' },
-    { name: 'location_id', def: 'INT' },
-    { name: 'floor_id', def: 'INT' },
-    { name: 'project_manager', def: 'VARCHAR(255)' },
-    { name: 'stakeholders', def: 'JSONB' },
-    { name: 'estimatedHours', def: 'NUMERIC(10,2)' },
-    { name: 'actualHours', def: 'NUMERIC(10,2)' },
-    { name: 'timeEntries', def: 'TEXT' },
-    { name: 'ragStatus', def: 'VARCHAR(10)' },
-    { name: 'ragReason', def: 'VARCHAR(255)' }
-  ];
-
-  for (const column of columns) {
-    // SECURITY: Validate column name contains only safe characters (defense in depth)
-    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(column.name)) {
-      logger.error('SECURITY: Invalid column name detected', { columnName: column.name });
-      continue;
-    }
-
-    try {
-      await pool.query(`ALTER TABLE Projects ADD COLUMN IF NOT EXISTS ${column.name} ${column.def}`);
-    } catch (err) {
-      logger.warn('Column migration warning', { columnName: column.name, error: err.message });
-    }
-  }
-
-  // pool kept open
-}
-
 // Get all projects
 router.get('/', async (req, res) => {
   try {
-    await initializeProjectsTable();
-
     const { page, limit, status, type, businessLine, search, location_id, sort, order, summary } = req.query;
 
-    // If no pagination params, return all (backward compat with monolith)
+    // Membership filter — admin / superadmin / owner see every project;
+    // everyone else sees only projects they are in project_members for.
+    // Added 2026-04-17 to close the IDOR that returned every project to any
+    // authenticated caller.
+    const visibility = await visibleProjectIds(req.user);
+    if (!visibility.all && (!visibility.ids || visibility.ids.length === 0)) {
+      return res.json({ projects: [], total: 0, page: parseInt(page) || 1, pageSize: parseInt(limit) || 25 });
+    }
+
+    // If no pagination params, return all visible (backward compat with monolith)
     if (!page && !summary) {
-      const result = await pool.query("SELECT * FROM Projects ORDER BY created_at DESC");
+      let result;
+      if (visibility.all) {
+        result = await pool.query("SELECT * FROM Projects ORDER BY created_at DESC");
+      } else {
+        result = await pool.query(
+          "SELECT * FROM Projects WHERE id = ANY($1::varchar[]) ORDER BY created_at DESC",
+          [visibility.ids]
+        );
+      }
       return res.json({ projects: result.rows.map(mapProjectRow) });
     }
 
@@ -211,6 +192,10 @@ router.get('/', async (req, res) => {
     const params = [];
     let paramIdx = 1;
 
+    if (!visibility.all) {
+      conditions.push(`id = ANY($${paramIdx++}::varchar[])`);
+      params.push(visibility.ids);
+    }
     if (status) { conditions.push(`status = $${paramIdx++}`); params.push(status); }
     if (type) { conditions.push(`type = $${paramIdx++}`); params.push(type); }
     if (businessLine) { conditions.push(`businessline = $${paramIdx++}`); params.push(businessLine); }
@@ -279,8 +264,7 @@ router.get('/', async (req, res) => {
       }
     });
   } catch (error) {
-    logger.error('Get projects error', { error: error.message });
-    res.status(500).json({ error: 'Failed to fetch projects', details: error.message });
+    return sendServerError(res, 'Failed to fetch projects', error);
   }
 });
 
@@ -298,8 +282,7 @@ router.get('/:id', async (req, res) => {
     res.json(project);
     // pool kept open
   } catch (error) {
-    logger.error('Get project error', { error: error.message, projectId: req.params.id });
-    res.status(500).json({ error: 'Failed to fetch project', details: error.message });
+    return sendServerError(res, 'Failed to fetch project', error, { projectId: req.params.id });
   }
 });
 
@@ -319,8 +302,7 @@ router.get('/:id/children', async (req, res) => {
     res.json({ projects });
     // pool kept open
   } catch (error) {
-    logger.error('Get child projects error', { error: error.message, parentId: req.params.id });
-    res.status(500).json({ error: 'Failed to fetch child projects', details: error.message });
+    return sendServerError(res, 'Failed to fetch child projects', error, { parentId: req.params.id });
   }
 });
 
@@ -330,19 +312,19 @@ router.post('/',
   auditLog('Project created', 'project', 'info'),
   async (req, res) => {
   try {
-    await initializeProjectsTable();
-
     const { id, name, client, type, status, budget, actualBudget, startDate, endDate, description, tasks,
             requestorInfo, siteLocation, businessLine, progress, priority, requestDate, dueDate, estimatedBudget,
             costCenter, purchaseOrder, parent_project_id, projectManager, stakeholders } = req.body;
 
+    const creatorId = req.user && req.user.userId ? parseInt(req.user.userId, 10) : null;
+
     const result = await pool.query(`
       INSERT INTO Projects (id, name, client, type, status, budget, actualBudget, startDate, endDate, description, tasks,
                            requestorInfo, siteLocation, businessLine, progress, priority, requestDate, dueDate, estimatedBudget,
-                           costCenter, purchaseOrder, parent_project_id, project_manager, stakeholders)
+                           costCenter, purchaseOrder, parent_project_id, project_manager, stakeholders, created_by_user_id)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
               $12, $13, $14, $15, $16, $17, $18, $19,
-              $20, $21, $22, $23, $24)
+              $20, $21, $22, $23, $24, $25)
       RETURNING *
     `, [
       id, name, client || '', type || '', status || 'planning',
@@ -354,11 +336,24 @@ router.post('/',
       requestDate ? new Date(requestDate) : null, dueDate ? new Date(dueDate) : null,
       estimatedBudget || 0,
       costCenter || '', purchaseOrder || '', parent_project_id || null,
-      projectManager || null, JSON.stringify(stakeholders || [])
+      projectManager || null, JSON.stringify(stakeholders || []),
+      creatorId
     ]);
 
     const project = result.rows[0];
     project.tasks = typeof project.tasks === 'string' ? JSON.parse(project.tasks) : project.tasks;
+
+    // Seed project_members so the creator keeps access even if their role
+    // changes later (e.g. from project_manager → auditor). Admin-tier roles
+    // bypass membership, but adding them here is idempotent and cheap.
+    if (creatorId) {
+      await pool.query(
+        `INSERT INTO project_members (project_id, user_id, role, added_by_user_id)
+         VALUES ($1, $2, 'owner', $2)
+         ON CONFLICT (project_id, user_id) DO NOTHING`,
+        [id, creatorId]
+      );
+    }
 
     // If this is a location (has parent_project_id), update parent rollups
     if (parent_project_id) {
@@ -370,8 +365,7 @@ router.post('/',
     res.status(201).json({ project });
     // pool kept open
   } catch (error) {
-    logger.error('Create project error', { error: error.message });
-    res.status(500).json({ error: 'Failed to create project', details: error.message });
+    return sendServerError(res, 'Failed to create project', error);
   }
 });
 
@@ -432,8 +426,7 @@ router.put('/:id',
 
     res.json({ project });
   } catch (error) {
-    logger.error('Update project error', { error: error.message, projectId: req.params.id });
-    res.status(500).json({ error: 'Failed to update project', details: error.message });
+    return sendServerError(res, 'Failed to update project', error, { projectId: req.params.id });
   }
 });
 
@@ -468,8 +461,7 @@ router.delete('/:id',
     res.json({ message: 'Project deleted successfully' });
     // pool kept open
   } catch (error) {
-    logger.error('Delete project error', { error: error.message, projectId: req.params.id });
-    res.status(500).json({ error: 'Failed to delete project', details: error.message });
+    return sendServerError(res, 'Failed to delete project', error, { projectId: req.params.id });
   }
 });
 
@@ -542,8 +534,7 @@ router.post('/:projectId/time-entry', auditLog('Time entry added', 'project', 'i
 
     res.json({ message: 'Time entry added successfully', entry: newEntry });
   } catch (error) {
-    logger.error('Add time entry error', { error: error.message, projectId: req.params.projectId });
-    res.status(500).json({ error: 'Failed to add time entry', details: error.message });
+    return sendServerError(res, 'Failed to add time entry', error, { projectId: req.params.projectId });
   }
 });
 
@@ -589,8 +580,7 @@ router.put('/:projectId/tasks/:taskId', auditLog('Task updated', 'project', 'inf
 
     // pool kept open
   } catch (error) {
-    logger.error('Update task error', { error: error.message, projectId: req.params.projectId, taskId: req.params.taskId });
-    res.status(500).json({ error: 'Failed to update task', details: error.message });
+    return sendServerError(res, 'Failed to update task', error, { projectId: req.params.projectId, taskId: req.params.taskId });
   }
 });
 
@@ -636,8 +626,7 @@ router.post('/:projectId/tasks', auditLog('Task created', 'project', 'info'), as
 
     // pool kept open
   } catch (error) {
-    logger.error('Create task error', { error: error.message, projectId: req.params.projectId });
-    res.status(500).json({ error: 'Failed to create task', details: error.message });
+    return sendServerError(res, 'Failed to create task', error, { projectId: req.params.projectId });
   }
 });
 
@@ -674,8 +663,7 @@ router.delete('/:projectId/tasks/:taskId', auditLog('Task deleted', 'project', '
 
     // pool kept open
   } catch (error) {
-    logger.error('Delete task error', { error: error.message, projectId: req.params.projectId, taskId: req.params.taskId });
-    res.status(500).json({ error: 'Failed to delete task', details: error.message });
+    return sendServerError(res, 'Failed to delete task', error, { projectId: req.params.projectId, taskId: req.params.taskId });
   }
 });
 

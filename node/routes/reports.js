@@ -1,5 +1,6 @@
 const express = require('express');
 const { pool } = require('../db');
+const { sendServerError } = require('../utils/errors');
 const router = express.Router();
 
 // GET /reports/portfolio - Executive-level aggregate stats
@@ -853,8 +854,7 @@ router.get('/custom', async (req, res) => {
       res.status(400).json({ error: 'Invalid source. Use: projects, fieldops, rooms, equipment, vendors' });
     }
   } catch (error) {
-    console.error('Custom report error:', error);
-    res.status(500).json({ error: 'Failed to generate custom report', details: error.message });
+    return sendServerError(res, 'Failed to generate custom report', error);
   }
 });
 
@@ -968,7 +968,7 @@ router.get('/health-matrix', async (req, res) => {
 
     res.json({ projects, summary });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to generate health matrix', details: error.message });
+    return sendServerError(res, 'Failed to generate health matrix', error);
   }
 });
 
@@ -1215,7 +1215,7 @@ router.get('/attention', async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to generate attention feed', details: error.message });
+    return sendServerError(res, 'Failed to generate attention feed', error);
   }
 });
 

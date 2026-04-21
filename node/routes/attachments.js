@@ -24,10 +24,12 @@ if (!process.env.JWT_SECRET) {
     process.exit(1);
 }
 
-// Authentication middleware
+// Authentication middleware. Query-param tokens were removed 2026-04-17 —
+// see node/middleware/auth.js for the rationale.
 const authenticateToken = (req, res, next) => {
-    // Accept token from header OR query parameter (query param for download links)
-    const token = req.headers['x-auth-token'] || req.query.token;
+    const authHeader = req.headers['authorization'] || '';
+    const bearer = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
+    const token = bearer || req.headers['x-auth-token'];
     if (!token) return res.status(401).json({ error: 'Access denied. No token provided.' });
 
     try {

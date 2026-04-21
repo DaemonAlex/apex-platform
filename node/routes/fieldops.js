@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const logger = require('../utils/logger');
+const { sendServerError } = require('../utils/errors');
 const { auditLog } = require('../middleware/audit');
 const { requireRole } = require('../middleware/auth');
 const router = express.Router();
@@ -14,81 +15,6 @@ router.use((req, res, next) => {
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
   return writerGate(req, res, next);
 });
-
-// Auto-migration: ensure fieldops table exists, then add any newer columns.
-// Prior to 2026-04 the table itself was assumed to exist somewhere else
-// (it never actually was), so the migration logged "relation fieldops does
-// not exist" on every backend startup and the field ops feature failed
-// silently on the first request from a fresh DB.
-let migrationDone = false;
-async function ensureFieldOpColumns(retries = 5) {
-  if (migrationDone) return;
-  for (let attempt = 0; attempt < retries; attempt++) {
-    try {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS fieldops (
-          id SERIAL PRIMARY KEY,
-          project_id VARCHAR(50),
-          task_id VARCHAR(50),
-          task_name TEXT,
-          project_name TEXT,
-          type VARCHAR(50) DEFAULT 'service',
-          location TEXT,
-          scheduled_date DATE,
-          start_time VARCHAR(20),
-          end_time VARCHAR(20),
-          assignee VARCHAR(255),
-          notes TEXT,
-          estimated_duration NUMERIC(6,2),
-          status VARCHAR(20) DEFAULT 'scheduled',
-          completed_at TIMESTAMPTZ,
-          completed_by VARCHAR(255),
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-      await pool.query(`
-        DO $$ BEGIN
-          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fieldops' AND column_name='vendor_id') THEN
-            ALTER TABLE fieldops ADD COLUMN vendor_id INTEGER NULL;
-          END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fieldops' AND column_name='vendor_contact') THEN
-          ALTER TABLE fieldops ADD COLUMN vendor_contact VARCHAR(255) NULL;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fieldops' AND column_name='assigned_type') THEN
-          ALTER TABLE fieldops ADD COLUMN assigned_type VARCHAR(20) DEFAULT 'internal';
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fieldops' AND column_name='room_id') THEN
-          ALTER TABLE fieldops ADD COLUMN room_id INTEGER NULL;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fieldops' AND column_name='service_category') THEN
-          ALTER TABLE fieldops ADD COLUMN service_category VARCHAR(50) DEFAULT 'project';
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fieldops' AND column_name='priority') THEN
-          ALTER TABLE fieldops ADD COLUMN priority VARCHAR(20) DEFAULT 'normal';
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fieldops' AND column_name='response_time_hours') THEN
-          ALTER TABLE fieldops ADD COLUMN response_time_hours NUMERIC(6,1) NULL;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fieldops' AND column_name='vendor_name') THEN
-          ALTER TABLE fieldops ADD COLUMN vendor_name VARCHAR(255) NULL;
-        END IF;
-      END $$;
-    `);
-      migrationDone = true;
-      logger.info('Field ops table and migrations ready');
-      return;
-    } catch (err) {
-      if (attempt === retries - 1) {
-        logger.error('Field ops migration failed', { error: err.message });
-        return;
-      }
-      // Backoff: 1s, 2s, 4s, 8s, 16s - tolerate slow DB startup
-      await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
-    }
-  }
-}
-ensureFieldOpColumns();
 
 // Get all field ops (with optional filters)
 router.get('/', async (req, res) => {
@@ -137,8 +63,7 @@ router.get('/', async (req, res) => {
 
     res.json({ scheduled, completed, pending });
   } catch (error) {
-    logger.error('Get field ops error', { error: error.message });
-    res.status(500).json({ error: 'Failed to fetch field ops', details: error.message });
+    return sendServerError(res, 'Failed to fetch field ops', error);
   }
 });
 
@@ -175,8 +100,7 @@ router.post('/', auditLog('Field op created', 'fieldops', 'info'), async (req, r
 
     res.status(201).json({ fieldOp: mapFieldOpsRow(result.rows[0]) });
   } catch (error) {
-    logger.error('Create field op error', { error: error.message });
-    res.status(500).json({ error: 'Failed to create field op', details: error.message });
+    return sendServerError(res, 'Failed to create field op', error);
   }
 });
 
@@ -435,24 +359,9 @@ function mapFieldOpsRow(row) {
 
 // ==================== FIELD OP NOTES ====================
 
-// Ensure notes table
-async function ensureNotesTable() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS FieldOpNotes (
-      id SERIAL PRIMARY KEY,
-      fieldop_id INTEGER NOT NULL,
-      author VARCHAR(255) NOT NULL,
-      content TEXT NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-}
-let notesTableReady = false;
-
 // GET /api/fieldops/:id/notes
 router.get('/:id/notes', async (req, res) => {
   try {
-    if (!notesTableReady) { await ensureNotesTable(); notesTableReady = true; }
     const result = await pool.query(
       'SELECT * FROM FieldOpNotes WHERE fieldop_id = $1 ORDER BY created_at DESC',
       [req.params.id]
@@ -472,7 +381,6 @@ router.get('/:id/notes', async (req, res) => {
 // POST /api/fieldops/:id/notes
 router.post('/:id/notes', auditLog('Field op note added', 'fieldops', 'info'), async (req, res) => {
   try {
-    if (!notesTableReady) { await ensureNotesTable(); notesTableReady = true; }
     const { content } = req.body;
     if (!content?.trim()) return res.status(400).json({ error: 'Content required' });
     const author = req.user?.name || req.user?.email || 'Unknown';

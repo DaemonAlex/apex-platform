@@ -73,23 +73,8 @@ async function main() {
   }
 
   try {
-    // Ensure the Users table exists. Schema must match the one auth.js
-    // creates lazily on first login attempt - keep these in sync.
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS Users (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
-        email VARCHAR(255) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL,
-        role VARCHAR(50) DEFAULT 'auditor',
-        preferences TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-    await client.query(`ALTER TABLE Users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ DEFAULT NOW()`);
-    await client.query(`ALTER TABLE Users ADD COLUMN IF NOT EXISTS password_expires_at TIMESTAMPTZ`);
-    await client.query(`ALTER TABLE Users ADD COLUMN IF NOT EXISTS force_password_change BOOLEAN DEFAULT FALSE`);
+    // Schema is managed by Drizzle (drizzle/schema.ts). Tables must exist
+    // before running this seed. Run: npm run db:push
 
     // Refuse to do anything if any user already exists. This makes the
     // script idempotent and safe to re-run, and prevents accidental

@@ -24,100 +24,9 @@ router.use((req, res, next) => {
   return adminGate(req, res, next);
 });
 
-async function ensureCiscoTables() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS cisco_devices (
-      id SERIAL PRIMARY KEY,
-      device_id VARCHAR(255) UNIQUE NOT NULL,
-      display_name VARCHAR(255),
-      product VARCHAR(255),
-      type VARCHAR(100),
-      status VARCHAR(50),
-      serial VARCHAR(100),
-      mac VARCHAR(50),
-      ip VARCHAR(50),
-      workspace_id VARCHAR(255),
-      org_id VARCHAR(255),
-      last_seen TIMESTAMPTZ,
-      raw_data JSONB DEFAULT '{}',
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS cisco_sync_log (
-      id SERIAL PRIMARY KEY,
-      sync_type VARCHAR(50) NOT NULL,
-      records_synced INTEGER DEFAULT 0,
-      status VARCHAR(20) NOT NULL DEFAULT 'pending',
-      error_message TEXT,
-      started_at TIMESTAMPTZ DEFAULT NOW(),
-      completed_at TIMESTAMPTZ
-    )
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS cisco_locations (
-      id SERIAL PRIMARY KEY,
-      location_id VARCHAR(255) UNIQUE NOT NULL,
-      display_name VARCHAR(255),
-      org_id VARCHAR(255),
-      address JSONB DEFAULT '{}',
-      floors JSONB DEFAULT '[]',
-      raw_data JSONB DEFAULT '{}',
-      synced_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS cisco_workspaces (
-      id SERIAL PRIMARY KEY,
-      workspace_id VARCHAR(255) UNIQUE NOT NULL,
-      display_name VARCHAR(255),
-      org_id VARCHAR(255),
-      type VARCHAR(100),
-      capacity INTEGER DEFAULT 0,
-      location_id VARCHAR(255),
-      floor_id VARCHAR(255),
-      calling JSONB DEFAULT '{}',
-      sip_address VARCHAR(255),
-      raw_data JSONB DEFAULT '{}',
-      synced_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS cisco_room_checks (
-      id SERIAL PRIMARY KEY,
-      workspace_id VARCHAR(255) NOT NULL,
-      workspace_name VARCHAR(255),
-      checked_by VARCHAR(255),
-      status VARCHAR(20) DEFAULT 'pass',
-      notes TEXT,
-      snow_ticket VARCHAR(100),
-      checked_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS cisco_room_schedules (
-      workspace_id VARCHAR(255) PRIMARY KEY,
-      workspace_name VARCHAR(255),
-      check_frequency VARCHAR(20) DEFAULT 'weekly',
-      check_day INT DEFAULT 1,
-      last_checked_at TIMESTAMPTZ,
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-}
-
-let tablesReady = false;
-
 // Load persisted Cisco config from DB into process.env on startup
 async function loadCiscoConfigFromDB() {
   try {
-    await pool.query(`CREATE TABLE IF NOT EXISTS AppConfig (key VARCHAR(100) PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ DEFAULT NOW())`);
     const result = await pool.query(`SELECT key, value FROM AppConfig WHERE key IN ('cisco_personal_token', 'cisco_mock_mode')`);
     for (const row of result.rows) {
       const val = typeof row.value === 'string' ? row.value : JSON.stringify(row.value).replace(/^"|"$/g, '');
@@ -147,7 +56,6 @@ router.get('/config', async (req, res) => {
 router.post('/config', async (req, res) => {
   try {
     const { personalToken, mockMode } = req.body;
-    await pool.query(`CREATE TABLE IF NOT EXISTS AppConfig (key VARCHAR(100) PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ DEFAULT NOW())`);
 
     if (typeof mockMode === 'boolean') {
       process.env.CISCO_MOCK_MODE = mockMode ? 'true' : 'false';
@@ -176,8 +84,6 @@ router.post('/config', async (req, res) => {
 // GET /api/cisco/status - Check connection and return cache stats
 router.get('/status', async (req, res) => {
   try {
-    if (!tablesReady) { await ensureCiscoTables(); tablesReady = true; }
-
     const status = await cisco.checkStatus();
 
     const deviceCountResult = await pool.query('SELECT COUNT(*) FROM cisco_devices');
@@ -201,7 +107,7 @@ router.get('/status', async (req, res) => {
 // GET /api/cisco/devices - Sync from Control Hub and return devices
 router.get('/devices', async (req, res) => {
   try {
-    if (!tablesReady) { await ensureCiscoTables(); tablesReady = true; }
+
 
     const logRow = await pool.query(
       `INSERT INTO cisco_sync_log (sync_type, status) VALUES ('devices', 'running') RETURNING id`
@@ -270,7 +176,7 @@ router.get('/devices', async (req, res) => {
 // GET /api/cisco/devices/:id - Get single device from Control Hub
 router.get('/devices/:id', async (req, res) => {
   try {
-    if (!tablesReady) { await ensureCiscoTables(); tablesReady = true; }
+
     const device = await cisco.getDevice(req.params.id);
     res.json(device);
   } catch (error) {
@@ -287,7 +193,7 @@ router.get('/workspaces', async (req, res) => {
     const workspaces = result.items || [];
 
     // Cache into cisco_workspaces
-    if (!tablesReady) { await ensureCiscoTables(); tablesReady = true; }
+
     for (const ws of workspaces) {
       await pool.query(`
         INSERT INTO cisco_workspaces
@@ -341,7 +247,7 @@ router.post('/workspaces', async (req, res) => {
 // GET /api/cisco/locations - Return location hierarchy (buildings > floors)
 router.get('/locations', async (req, res) => {
   try {
-    if (!tablesReady) { await ensureCiscoTables(); tablesReady = true; }
+
 
     const result = await cisco.getLocations();
     const locations = result.items || [];
@@ -429,7 +335,7 @@ router.patch('/devices/:id/config', async (req, res) => {
 // GET /api/cisco/checks - Room check history
 router.get('/checks', async (req, res) => {
   try {
-    if (!tablesReady) { await ensureCiscoTables(); tablesReady = true; }
+
     const result = await pool.query(`SELECT * FROM cisco_room_checks ORDER BY checked_at DESC LIMIT 200`);
     res.json({ checks: result.rows });
   } catch (e) {
@@ -440,7 +346,7 @@ router.get('/checks', async (req, res) => {
 // POST /api/cisco/checks - Log a room check
 router.post('/checks', async (req, res) => {
   try {
-    if (!tablesReady) { await ensureCiscoTables(); tablesReady = true; }
+
     const { workspaceId, workspaceName, checkedBy, status, notes, snowTicket } = req.body;
     if (!workspaceId) return res.status(400).json({ error: 'workspaceId is required' });
     const result = await pool.query(
@@ -461,7 +367,7 @@ router.post('/checks', async (req, res) => {
 // GET /api/cisco/schedules - All check schedules
 router.get('/schedules', async (req, res) => {
   try {
-    if (!tablesReady) { await ensureCiscoTables(); tablesReady = true; }
+
     const result = await pool.query(`SELECT * FROM cisco_room_schedules`);
     res.json({ schedules: result.rows });
   } catch (e) {
@@ -472,7 +378,7 @@ router.get('/schedules', async (req, res) => {
 // PUT /api/cisco/workspaces/:workspaceId/schedule - Set check schedule for a workspace
 router.put('/workspaces/:workspaceId/schedule', async (req, res) => {
   try {
-    if (!tablesReady) { await ensureCiscoTables(); tablesReady = true; }
+
     const { workspaceId } = req.params;
     const { workspaceName, checkFrequency, checkDay } = req.body;
     await pool.query(
