@@ -1,0 +1,145 @@
+# APEX Platform — Linux dev stack
+#
+# Optimized for a developer's laptop or dev box. Differences from
+# docker-compose.yml (the production compose file):
+#
+#   - Backend runs via nodemon with a bind mount of ./node so file edits
+#     hot-reload without rebuilding the image.
+#   - DB and backend ports are published to the host so you can run
+#     psql / node scripts / Jest against the container stack.
+#   - COOKIE_SECURE defaults to false so cookie auth works over plain HTTP.
+#   - Vue bundle is served by Vite's dev server (./client bind-mounted and
+#     hot-reloaded). The Vite dev server lives on port 5173.
+#   - Web tier is the same prod nginx but consumes the built bundle from
+#     ./vue (same bind mount the Vite dev output lands in).
+#   - Healthchecks are relaxed (intervals halved) so you're not waiting
+#     30s for every restart to report ready.
+#
+# Quick start (on a fresh Linux box):
+#
+#   ./docker/bootstrap-dev.sh        # generates secrets/, .env, first user
+#   docker compose -f docker-compose.dev.yml up --build
+#   open http://localhost:8080
+#
+# This file is NOT for production. It turns off the Secure cookie flag and
+# exposes internal ports.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: apex-db-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-apex_db}
+      POSTGRES_USER: ${DB_USERNAME:-apex_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required — put it in .env}
+    ports:
+      # Published so you can run `psql -h localhost -p 5432` from the host.
+      - "${DB_HOST_PORT:-5432}:5432"
+    volumes:
+      - apex-db-dev-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-apex_user} -d ${DB_DATABASE:-apex_db}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - apex-dev-net
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend.dev
+    image: apex-backend-dev:latest
+    container_name: apex-backend-dev
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      TLS_MIN_VERSION: ${TLS_MIN_VERSION:-TLSv1.2}
+      # Database — point at the in-stack service name.
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-apex_db}
+      DB_USERNAME: ${DB_USERNAME:-apex_user}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
+      DB_SSL: "false"
+      # Drizzle schema pushes can reuse the same creds in dev since the
+      # postgres user in the compose DB is a superuser.
+      DDL_USERNAME: ${DB_USERNAME:-apex_user}
+      DDL_PASSWORD: ${DB_PASSWORD}
+      # Auth — v9.0 cookies. COOKIE_SECURE=false so auth works on plain HTTP.
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
+      JWT_PRIVATE_KEY_FILE: /app/secrets/jwt_private.pem
+      JWT_PUBLIC_KEY_FILE: /app/secrets/jwt_public.pem
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+      JWT_REFRESH_TTL_DAYS: ${JWT_REFRESH_TTL_DAYS:-14}
+      COOKIE_SECURE: "false"
+      COOKIE_DOMAIN: ""
+      TOTP_ENC_KEY: ${TOTP_ENC_KEY:?TOTP_ENC_KEY is required}
+      TOTP_ISSUER: ${TOTP_ISSUER:-APEX Platform (dev)}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080,http://localhost:5173}
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
+      INITIAL_ADMIN_NAME: ${INITIAL_ADMIN_NAME:-Dev Admin}
+    ports:
+      # Published so Jest / check-reports.js / curl can hit the API directly.
+      - "${BACKEND_HOST_PORT:-3001}:3001"
+    volumes:
+      # Hot-reload: edit a file in ./node on the host, nodemon restarts the
+      # backend inside the container.
+      - ./node:/app
+      # node_modules lives INSIDE the container so host Node version /
+      # architecture mismatches don't break it.
+      - apex-backend-dev-modules:/app/node_modules
+      - apex-uploads-dev:/app/uploads
+      - ./secrets:/app/secrets:ro
+    networks:
+      - apex-dev-net
+
+  vite:
+    image: node:20-alpine
+    container_name: apex-vite-dev
+    working_dir: /src
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0"
+    environment:
+      # Vite reads VITE_API_URL for the API base. Dev uses the host-published
+      # backend so requests go through the same Origin (no CORS overhead).
+      VITE_API_URL: ${VITE_API_URL:-/api}
+    ports:
+      - "${VITE_HOST_PORT:-5173}:5173"
+    volumes:
+      - ./client:/src
+      - apex-vite-dev-modules:/src/node_modules
+    networks:
+      - apex-dev-net
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.web
+    image: apex-web-dev:latest
+    container_name: apex-web-dev
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    networks:
+      - apex-dev-net
+
+volumes:
+  apex-db-dev-data:
+  apex-backend-dev-modules:
+  apex-vite-dev-modules:
+  apex-uploads-dev:
+
+networks:
+  apex-dev-net:
+    driver: bridge

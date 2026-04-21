@@ -58,19 +58,43 @@ PostgreSQL 16 (port 5432) <-- Express API
 The fastest way to run APEX on a Linux server. The repo ships a complete
 three-container stack (PostgreSQL 16, Express backend, nginx web tier).
 
+### Production
+
 ```bash
 git clone https://github.com/DaemonAlex/apex-platform.git
 cd apex-platform
+./docker/generate-keys.sh       # RSA keypair for RS256 access tokens
 cp .env.example .env
-# Edit .env: set DB_PASSWORD, JWT_SECRET, INITIAL_ADMIN_EMAIL, INITIAL_ADMIN_PASSWORD
+# Edit .env: DB_PASSWORD, JWT_SECRET, TOTP_ENC_KEY, INITIAL_ADMIN_EMAIL, INITIAL_ADMIN_PASSWORD
 docker compose build
 docker compose up -d
+docker compose exec backend npm run db:push
 docker compose exec backend node seed-admin.js
 ```
 
-Open `http://<host>:8080`. Full instructions, including air-gapped install,
-backup/restore, TLS termination, and a security checklist, are in
-[`docker/README.md`](docker/README.md).
+Open `http://<host>:8080`.
+
+### Linux development box
+
+Use the `dev` branch plus `docker-compose.dev.yml`. The bootstrap script
+generates keys, creates `.env` with strong random values, and prints the
+initial admin password. The dev stack runs the backend under nodemon with
+a bind mount and publishes every internal port so `psql`, `curl`, and
+`jest` work from the host.
+
+```bash
+git clone --branch dev https://github.com/DaemonAlex/apex-platform.git
+cd apex-platform
+./docker/bootstrap-dev.sh
+docker compose -f docker-compose.dev.yml up --build
+# --- in another terminal ---
+docker compose -f docker-compose.dev.yml exec backend npm run db:push
+docker compose -f docker-compose.dev.yml exec backend node seed-admin.js
+```
+
+Full instructions for both flows, including air-gapped install,
+backup/restore, TLS termination, managed PostgreSQL, Docker secrets,
+and a security checklist, are in [`docker/README.md`](docker/README.md).
 
 ---
 
