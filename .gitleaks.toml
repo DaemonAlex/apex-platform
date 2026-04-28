@@ -1,0 +1,71 @@
+# gitleaks config for APEX — extends the default ruleset with an allowlist
+# tuned for this repo's documentation examples and env-var templates.
+#
+# Anything that matches these patterns is NOT flagged. Everything that
+# doesn't match but fires a default rule still blocks the commit.
+#
+# Invoked automatically by the pre-commit hook in .pre-commit-config.yaml.
+
+title = "APEX gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "APEX-wide exemptions"
+
+# --- Files that are templates or docs with intentional placeholders ------
+paths = [
+  # env template — every value is a CHANGE_ME_* sentinel
+  '''\.env\.example$''',
+  # gitleaks config itself can mention the patterns we allow without tripping
+  '''\.gitleaks\.toml$''',
+  # pre-commit metadata
+  '''\.pre-commit-config\.yaml$''',
+  # npm lockfiles contain integrity hashes that look like secrets
+  '''package-lock\.json$''',
+  '''yarn\.lock$''',
+  # vendored / build output
+  '''node_modules/''',
+  '''vue/apex-rooms\.iife\.js$''',
+  # migration snapshots are schema dumps, not secret material
+  '''node/drizzle/migrations/meta/''',
+  # the built Vue bundle contains base64-encoded assets that look like keys
+  '''client/dist/''',
+]
+
+# --- Regex patterns allowed anywhere ------------------------------------
+regexes = [
+  # Template sentinels — any CHANGE_ME_* literal
+  '''CHANGE_ME_[A-Za-z0-9_]+''',
+  # Angle-bracketed placeholders in docs: <jwt>, <token>, <secret>, <generated...>
+  '''<[a-zA-Z0-9_\- ]+>''',
+  # Example-data markers
+  '''your-(jwt|token|secret|key|password|username|email)''',
+  '''(REPLACE|REPLACEME|TODO|FIXME)[_\-]?(ME|SECRET|PASSWORD|TOKEN|KEY)''',
+  # Classic JWT header only (alg+typ, then truncation). Real tokens would
+  # also carry payload + signature; this is the unambiguous doc form.
+  '''eyJhbGciOi[A-Za-z0-9]+IsInR5cCI6IkpXVCJ9\.?\.?\.?''',
+]
+
+# --- Secret-value stopwords — flagged strings that match a stopword in
+#     their surrounding context are suppressed. Useful for documentation
+#     that quotes example hashes or hex values in code fences.
+stopwords = [
+  "example",
+  "placeholder",
+  "sample",
+  "dummy",
+  "fixture",
+  "test",
+  "elided",
+]
+
+# ---------------------------------------------------------------------------
+# Per-rule overrides — tune the default rules down where they produce noise.
+# ---------------------------------------------------------------------------
+
+# The generic-api-key rule is extremely broad (any 32+ char high-entropy
+# string). It's useful for catching fresh leaks but produces false positives
+# on integrity hashes, git sha sums, and doc examples. We keep it on but
+# narrow it via the allowlist above.

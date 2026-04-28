@@ -475,6 +475,18 @@ baseline ASRB review and meets SOC 2 CC6 / CC7 controls.
 
 ---
 
+## Security
+
+- Security posture, secrets management, and pre-commit setup: [`SECURITY.md`](SECURITY.md)
+- Report a vulnerability: email **damonalexander@me.com** (not via public issues)
+- Install the pre-commit secret scanner after cloning:
+
+  ```bash
+  pip install pre-commit
+  pre-commit install
+  pre-commit run --all-files
+  ```
+
 ## License
 
 MIT License - see [LICENSE](LICENSE)
