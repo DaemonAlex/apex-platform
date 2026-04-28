@@ -50,7 +50,10 @@ repos:
       - id: check-json
         exclude: '(tsconfig.*\.json|\.vscode/.*\.json)$'
       # Strip trailing whitespace + ensure files end with a newline.
+      # The vue/ directory is the built Vite bundle output (machine
+      # generated, includes vendored CSS / SVG with intentional whitespace
+      # inside string literals); never touch it.
       - id: trailing-whitespace
-        exclude: '\.(md|snap)$'
+        exclude: '(\.(md|snap)$|^vue/)'
       - id: end-of-file-fixer
-        exclude: 'vue/apex-rooms\.iife\.js$'
+        exclude: '^vue/'
